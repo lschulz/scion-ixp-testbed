@@ -1,0 +1,6 @@
+#!/bin/bash
+
+# A wrapper script for scionlab-config-user switching to the scion user.
+# scionlab-config-user should be executed as 'scion', but the coordinator runs scionlab-config as root.
+
+sudo -u scion -i /home/scion/go/src/github.com/scionproto/scion/scionlab-config-user "$@"

@@ -1,0 +1,88 @@
+defaults:
+  # Default subnet to allocate subnets for links from. Only necessary if some links do not declare a
+  # network to use.
+  link_subnet: "10.1.1.0/24"
+
+  # Used by 'scion.sh topology':
+  subnet: "127.0.0.0/8"
+  zookeepers:
+    1:
+      addr: 127.0.0.1
+
+# Network declarations.
+networks:
+  "backbone":
+    type: "docker_bridge"
+    # Every network must specify an IP subnet, that must not overlap with any other.
+    subnet: "10.1.2.0/24"
+
+  "ixp1": # Network for the first IXP
+    type: "docker_bridge"
+    subnet: "10.1.3.0/24"
+
+  "ixp2_net": # Network for the second IXP
+    type: "ovs_bridge"
+    subnet: "10.1.4.0/24"
+
+ASes:
+  # ISD 1
+  "1-ff00:0:110":
+    core: true
+  "1-ff00:0:111":
+    cert_issuer: 1-ff00:0:110
+  "1-ff00:0:112":
+    cert_issuer: 1-ff00:0:110
+  "1-ff00:0:113":
+    cert_issuer: 1-ff00:0:110
+
+  # ISD 2
+  "2-ff00:0:210":
+    core: true
+  "2-ff00:0:211":
+    cert_issuer: 2-ff00:0:210
+  "2-ff00:0:212":
+    cert_issuer: 2-ff00:0:210
+  "2-ff00:0:213":
+    cert_issuer: 2-ff00:0:210
+
+# This section declares all IXPs and which network the will use.
+IXPs:
+  "ixp1":
+    network: "ixp1" # IXP and network may have the same name.
+
+  "ixp2":
+    network: "ixp2_net"
+
+links:
+  # Infrastructure
+  # Links may specify a network by name:
+  - {a: "1-ff00:0:110-br1", b: "2-ff00:0:210-br1", linkAtoB: CORE, network: "backbone"}
+  - {a: "1-ff00:0:110-br1", b: "1-ff00:0:111-br1", linkAtoB: CHILD, network: "backbone"}
+  - {a: "2-ff00:0:210-br1", b: "2-ff00:0:211-br1", linkAtoB: CHILD, network: "backbone"}
+
+  # User AS connections
+  # Links can also specify an IP subnet directly, to create a Docker bridge with that subnet.
+  # The same subnet refers to the same bridge, but explicitly defined networks must always be
+  # referred to by name.
+  - {a: "1-ff00:0:111-user", b: "1-ff00:0:112", linkAtoB: CHILD, network: "10.1.5.0/24"}
+  - {a: "1-ff00:0:111-user", b: "1-ff00:0:113", linkAtoB: CHILD, network: "10.1.5.0/24"}
+  # If no network is specified, a new docker bridge is created for every link, with a subnet
+  # allocated from 'link_subnet'.
+  - {a: "2-ff00:0:211-user", b: "2-ff00:0:212", linkAtoB: CHILD}
+  - {a: "2-ff00:0:211-user", b: "2-ff00:0:213", linkAtoB: CHILD}
+
+  # Peering links
+  # ixp1 refers to the IXP here, not to the network named ixp1.
+  - {a: "1-ff00:0:112-peer", b: "1-ff00:0:113-peer", linkAtoB: PEER, network: "ixp1"}
+  - {a: "1-ff00:0:113-peer", b: "2-ff00:0:212-peer", linkAtoB: PEER, network: "ixp1"}
+  # This link uses ixp2's network, but is not treated as a proper IXP link.
+  - {a: "2-ff00:0:212-peer", b: "2-ff00:0:213-peer", linkAtoB: PEER, network: "ixp2_net"}
+
+# Used by 'scion.sh topology':
+CAs:
+  CA1-1:
+    ISD: 1
+    commonName: CA1-1
+  CA2-1:
+    ISD: 2
+    commonName: CA2-1

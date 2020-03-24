@@ -1,0 +1,6 @@
+.venv
+__pycache__
+network-gen
+docker/coordinator/scionlab
+
+*.pyc

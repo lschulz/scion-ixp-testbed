@@ -1,0 +1,42 @@
+# Small topology for illustrating beacon server policies.
+
+defaults:
+  subnet: "127.0.0.0/8"
+  link_subnet: "10.1.10.0/24"
+  zookeepers:
+    1:
+      addr: 127.0.0.1
+ASes:
+  "1-ff00:0:110": # A
+    core: true
+  "1-ff00:0:120": # B
+    cert_issuer: 1-ff00:0:110
+  "1-ff00:0:121": # C
+    cert_issuer: 1-ff00:0:110
+  "1-ff00:0:122": # D
+    cert_issuer: 1-ff00:0:110
+  "1-ff00:0:130": # E
+    cert_issuer: 1-ff00:0:110
+  "1-ff00:0:140": # F
+    cert_issuer: 1-ff00:0:110
+  "2-ff00:0:210": # G
+    core: true
+  "2-ff00:0:240": # H
+    cert_issuer: 2-ff00:0:210
+links:
+  - {a: "1-ff00:0:110", b: "2-ff00:0:210", linkAtoB: CORE}
+  - {a: "1-ff00:0:110", b: "1-ff00:0:120", linkAtoB: CHILD}
+  - {a: "1-ff00:0:110", b: "1-ff00:0:121", linkAtoB: CHILD}
+  - {a: "1-ff00:0:110", b: "1-ff00:0:122", linkAtoB: CHILD}
+  - {a: "1-ff00:0:120", b: "1-ff00:0:130", linkAtoB: CHILD}
+  - {a: "1-ff00:0:121", b: "1-ff00:0:130", linkAtoB: CHILD}
+  - {a: "1-ff00:0:122", b: "1-ff00:0:130", linkAtoB: CHILD}
+  - {a: "1-ff00:0:130", b: "1-ff00:0:140", linkAtoB: CHILD}
+  - {a: "2-ff00:0:210", b: "2-ff00:0:240", linkAtoB: CHILD}
+CAs:
+  CA1-1:
+    ISD: 1
+    commonName: CA1-1
+  CA2-1:
+    ISD: 2
+    commonName: CA2-1

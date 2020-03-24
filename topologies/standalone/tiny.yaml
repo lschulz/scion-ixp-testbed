@@ -1,0 +1,36 @@
+# Tiny standalone topology.
+
+defaults:
+  subnet: "127.0.0.0/8"
+  link_subnet: "10.1.10.0/24"
+  zookeepers:
+    1:
+      addr: 127.0.0.1
+networks:
+  "ixp_network":
+    type: "ovs_bridge"
+    subnet: "10.1.20.0/24"
+ASes:
+  "1-ff00:0:110":
+    core: true
+    mtu: 1400
+  "1-ff00:0:111":
+    cert_issuer: 1-ff00:0:110
+  "1-ff00:0:112":
+    cert_issuer: 1-ff00:0:110
+  "1-ff00:0:113":
+    cert_issuer: 1-ff00:0:110
+IXPs:
+  "ixp1":
+    network: "ixp_network"
+links:
+  - {a: "1-ff00:0:110-br1#1", b: "1-ff00:0:111#1", linkAtoB: CHILD}
+  - {a: "1-ff00:0:110-br1#2", b: "1-ff00:0:112#1", linkAtoB: CHILD}
+  - {a: "1-ff00:0:110-br1#3", b: "1-ff00:0:113#1", linkAtoB: CHILD}
+  - {a: "1-ff00:0:111-peer#2", b: "1-ff00:0:112-peer#2", linkAtoB: PEER, network: "ixp1"}
+  - {a: "1-ff00:0:112-peer#3", b: "1-ff00:0:113-peer#2", linkAtoB: PEER, network: "ixp1"}
+  - {a: "1-ff00:0:113-peer#3", b: "1-ff00:0:111-peer#3", linkAtoB: PEER, network: "ixp1"}
+CAs:
+  CA1-1:
+    ISD: 1
+    commonName: CA1-1

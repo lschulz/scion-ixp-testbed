@@ -1,0 +1,39 @@
+# Example topology illustrating peering links to direct and indirect descendants.
+
+defaults:
+  subnet: "127.0.0.0/8"
+  link_subnet: "10.1.10.0/24"
+  zookeepers:
+    1:
+      addr: 127.0.0.1
+ASes:
+  "1-ff00:0:A":
+    core: true
+  "1-ff00:0:B":
+    cert_issuer: 1-ff00:0:A
+  "1-ff00:0:C":
+    cert_issuer: 1-ff00:0:A
+  "1-ff00:0:D":
+    cert_issuer: 1-ff00:0:A
+  "1-ff00:0:E":
+    cert_issuer: 1-ff00:0:A
+  "1-ff00:0:F":
+    cert_issuer: 1-ff00:0:A
+IXPs:
+  "ixp1":
+    network: "10.1.20.0/24"
+links:
+  - {a: "1-ff00:0:A", b: "1-ff00:0:B", linkAtoB: CHILD}
+  - {a: "1-ff00:0:A", b: "1-ff00:0:C", linkAtoB: CHILD}
+  - {a: "1-ff00:0:B", b: "1-ff00:0:D", linkAtoB: CHILD}
+  - {a: "1-ff00:0:B", b: "1-ff00:0:E", linkAtoB: CHILD}
+  - {a: "1-ff00:0:C", b: "1-ff00:0:E", linkAtoB: CHILD}
+  - {a: "1-ff00:0:E", b: "1-ff00:0:F", linkAtoB: CHILD}
+  - {a: "1-ff00:0:B", b: "1-ff00:0:C", linkAtoB: PEER, network: "ixp1"}
+  - {a: "1-ff00:0:B", b: "1-ff00:0:E", linkAtoB: PEER, network: "ixp1"}
+  - {a: "1-ff00:0:B", b: "1-ff00:0:F", linkAtoB: PEER, network: "ixp1"}
+  - {a: "1-ff00:0:C", b: "1-ff00:0:F", linkAtoB: PEER, network: "ixp1"}
+CAs:
+  CA1-1:
+    ISD: 1
+    commonName: CA1-1

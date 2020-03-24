@@ -1,0 +1,129 @@
+defaults:
+  link_subnet: "10.1.1.0/24"
+
+# Host declarations.
+hosts:
+  # localhost is only necessary if it is part of a 'host' network.
+  "localhost":
+    # Specification of host addresses to be used in 'host' networks.
+    addresses: {
+      "core": "192.168.244.4"
+    }
+
+  "host1":
+    # IP address at which the host is reachable.
+    # Can also specify 'ssh_port' if not 22.
+    ssh_host: "192.168.244.3"
+    username: "lars" # User name for login.
+    # identity_file: ".ssh/id_rsa" # Specifies a private key for authentication.
+    addresses: {
+      "core": "192.168.244.3"
+    }
+
+networks:
+  "coord":
+    # In a multi-host topology, the coordinator network must be a Docker overlay.
+    type: "overlay"
+    # Overlay networks must specify a swarm manager node as host (localhost is the default).
+    host: "localhost"
+    subnet: "10.1.2.0/24"
+    encrypted: true # Encrypt the coordinator traffic.
+
+  "core":
+    type: "host"
+    subnet: "192.168.244.0/24"
+
+  # OVS and Docker bridge can only connect ASes on the same host.
+  "isd1":
+    type: "ovs_bridge"
+    host: "localhost" # Can only connected ASes running on localhost.
+    subnet: "10.1.3.0/24"
+
+  "isd2":
+    type: "docker_bridge"
+    host: "host1" # Can only connect ASes running on host1.
+    subnet: "10.1.4.0/24"
+
+  # IXPs are can only have static links, if they have a 'host' network,
+  # therefore we use 'overlay' here.
+  "ixp1":
+    type: "overlay"
+    subnet: "10.1.5.0/24"
+
+  "ixp2":
+    type: "overlay"
+    subnet: "10.1.6.0/24"
+
+coordinator:
+  network: "coord"
+  host: "host1" # The coordinator can run on any host.
+  expose: "8000"
+  expose_on: "192.168.244.3"
+  users:
+    "admin":
+      email: "admin@example.com"
+      password: "admin"
+      superuser: true
+    "user1":
+      email: "user1@example.com"
+      password: "user1"
+    "user2":
+      email: user2@example.com
+      password: "user2"
+
+ASes:
+  # ISD 1
+  "1-ff00:0:110":
+    core: true
+    host: "localhost"
+  "1-ff00:0:111":
+    cert_issuer: 1-ff00:0:110
+    attachment_point: true
+    host: "localhost"
+  "1-ff00:0:112":
+    cert_issuer: 1-ff00:0:110
+    owner: "user1"
+    host: "localhost"
+    ixps: ["ixp1", "ixp2"]
+  "1-ff00:0:113":
+    cert_issuer: 1-ff00:0:110
+    owner: "user1"
+    host: "localhost"
+    ixps: ["ixp1", "ixp2"]
+
+  # ISD 2
+  "2-ff00:0:210":
+    core: true
+    host: "host1"
+  "2-ff00:0:211":
+    cert_issuer: 2-ff00:0:210
+    attachment_point: true
+    host: "host1"
+  "2-ff00:0:212":
+    cert_issuer: 2-ff00:0:210
+    owner: "user2"
+    host: "host1"
+    ixps: ["ixp1", "ixp2"]
+  "2-ff00:0:213":
+    cert_issuer: 2-ff00:0:210
+    owner: "user2"
+    host: "host1"
+    ixps: ["ixp1", "ixp2"]
+
+IXPs:
+  "ixp1":
+    network: "ixp1"
+  "ixp2":
+    network: "ixp2"
+
+links:
+  # Infrastructure
+  - {a: "1-ff00:0:110-br1", b: "2-ff00:0:210-br1", linkAtoB: CORE, network: "core"}
+  - {a: "1-ff00:0:110-br1", b: "1-ff00:0:111-br1", linkAtoB: CHILD, network: "isd1"}
+  - {a: "2-ff00:0:210-br1", b: "2-ff00:0:211-br1", linkAtoB: CHILD, network: "isd2"}
+
+  # User ASes
+  - {a: "1-ff00:0:111-user", b: "1-ff00:0:112", linkAtoB: CHILD, network: "isd1"}
+  - {a: "1-ff00:0:111-user", b: "1-ff00:0:113", linkAtoB: CHILD, network: "isd1"}
+  - {a: "2-ff00:0:211-user", b: "2-ff00:0:212", linkAtoB: CHILD, network: "isd2"}
+  - {a: "2-ff00:0:211-user", b: "2-ff00:0:213", linkAtoB: CHILD, network: "isd2"}

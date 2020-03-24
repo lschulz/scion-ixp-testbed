@@ -1,0 +1,49 @@
+# A more complex standalone topology with two ISDs.
+
+defaults:
+  subnet: "127.0.0.0/8"
+  link_subnet: "10.1.10.0/24"
+  zookeepers: {1: {addr: 127.0.0.1}}
+networks:
+  "links":
+    type: "docker_bridge"
+    subnet: "10.1.20.0/24"
+ASes:
+  "1-ff00:0:110": {core: true}                  # A
+  "1-ff00:0:120": {cert_issuer: "1-ff00:0:110"} # B
+  "1-ff00:0:121": {cert_issuer: "1-ff00:0:110"} # C
+  "1-ff00:0:130": {cert_issuer: "1-ff00:0:110"} # D
+  "1-ff00:0:131": {cert_issuer: "1-ff00:0:110"} # E
+  "1-ff00:0:132": {cert_issuer: "1-ff00:0:110"} # F
+  "1-ff00:0:133": {cert_issuer: "1-ff00:0:110"} # G
+  "2-ff00:0:210": {core: true}                  # H
+  "2-ff00:0:211": {core: true}                  # I
+  "2-ff00:0:220": {cert_issuer: "2-ff00:0:210"} # J
+  "2-ff00:0:230": {cert_issuer: "2-ff00:0:210"} # K
+links:
+  # Core
+  - {a: "1-ff00:0:110", b: "2-ff00:0:210", linkAtoB: CORE, network: "links"}
+  - {a: "2-ff00:0:210", b: "2-ff00:0:211", linkAtoB: CORE, network: "links"}
+  # ISD 1 Parent-Child
+  - {a: "1-ff00:0:110", b: "1-ff00:0:120", linkAtoB: CHILD, network: "links"}
+  - {a: "1-ff00:0:110", b: "1-ff00:0:121", linkAtoB: CHILD, network: "links"}
+  - {a: "1-ff00:0:120", b: "1-ff00:0:130", linkAtoB: CHILD, network: "links"}
+  - {a: "1-ff00:0:120", b: "1-ff00:0:131", linkAtoB: CHILD, network: "links"}
+  - {a: "1-ff00:0:120", b: "1-ff00:0:132", linkAtoB: CHILD, network: "links"}
+  - {a: "1-ff00:0:121", b: "1-ff00:0:132", linkAtoB: CHILD, network: "links"}
+  - {a: "1-ff00:0:121", b: "1-ff00:0:133", linkAtoB: CHILD, network: "links"}
+  # ISD 2 Parent-Child
+  - {a: "2-ff00:0:210", b: "2-ff00:0:220", linkAtoB: CHILD, network: "links"}
+  - {a: "2-ff00:0:211", b: "2-ff00:0:220", linkAtoB: CHILD, network: "links"}
+  - {a: "2-ff00:0:211", b: "2-ff00:0:230", linkAtoB: CHILD, network: "links"}
+  - {a: "2-ff00:0:220", b: "2-ff00:0:230", linkAtoB: CHILD, network: "links"}
+  # Peering
+  - {a: "1-ff00:0:120", b: "1-ff00:0:121", linkAtoB: PEER, network: "links"}
+  - {a: "1-ff00:0:121", b: "2-ff00:0:220", linkAtoB: PEER, network: "links"}
+  - {a: "1-ff00:0:130", b: "1-ff00:0:131", linkAtoB: PEER, network: "links"}
+  - {a: "1-ff00:0:131", b: "1-ff00:0:132", linkAtoB: PEER, network: "links"}
+  - {a: "1-ff00:0:133", b: "2-ff00:0:230", linkAtoB: PEER, network: "links"}
+  - {a: "1-ff00:0:130", b: "2-ff00:0:220", linkAtoB: PEER, network: "links"}
+CAs:
+  CA1-1: {ISD: 1, commonName: CA1-1}
+  CA2-1: {ISD: 2, commonName: CA2-1}

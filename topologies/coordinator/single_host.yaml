@@ -1,0 +1,32 @@
+# Three AS topology with coordinator. Everything is running on localhost.
+# All ASes are infrastructure ASes.
+
+defaults:
+  link_subnet: "10.1.1.0/24"
+networks:
+  "coord":
+    type: "docker_bridge"
+    host: "localhost"
+    subnet: "10.1.2.0/24"
+coordinator:
+  network: "coord"
+  host: "localhost"
+  expose: "8000"
+  expose_on: "192.168.244.4"
+  users:
+    "admin":
+      email: "admin@example.com"
+      password: "admin"
+      superuser: true
+ASes:
+  "1-ff00:0:110":
+    core: true
+    host: "localhost"
+  "1-ff00:0:111":
+    host: "localhost"
+  "1-ff00:0:112":
+    host: "localhost"
+links:
+  - {a: "1-ff00:0:110", b: "1-ff00:0:111", linkAtoB: CHILD, network: "10.1.3.0/24"}
+  - {a: "1-ff00:0:110", b: "1-ff00:0:112", linkAtoB: CHILD, network: "10.1.3.0/24"}
+  - {a: "1-ff00:0:111", b: "1-ff00:0:112", linkAtoB: PEER, network: "10.1.3.0/24"}

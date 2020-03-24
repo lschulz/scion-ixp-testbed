@@ -1,0 +1,88 @@
+defaults:
+  link_subnet: "10.1.1.0/24"
+
+networks:
+  "coord": # Network connecting the coordinator to the AS containers.
+    type: "docker_bridge"
+    subnet: "10.1.2.0/24"
+
+  "ixp1":
+    type: "docker_bridge"
+    subnet: "10.1.3.0/24"
+
+  "ixp2":
+    type: "docker_bridge"
+    subnet: "10.1.4.0/24"
+
+coordinator:
+  network: "coord" # Could specify "10.1.2.0/24" directly and remove 'coord' from networks.
+
+  # The coordinator will be reachable at http://192.168.244.4:8000.
+  # Make sure the coordinator is not exposed to the Internet!
+  expose: "8000"
+  expose_on: "192.168.244.4"
+
+  # Users configured in the coordinator
+  users:
+    "admin": # administrator (up to 50 user ASes)
+      email: "admin@example.com"
+      password: "admin"
+      superuser: true
+    "user1": # normal user (up to 5 user ASes)
+      email: "user1@example.com"
+      password: "user1"
+    "user2": # normal user (up to 5 user ASes)
+      email: user2@example.com
+      password: "user2"
+
+ASes:
+  # ISD 1
+  # Infrastructure ASes don not have an owner.
+  "1-ff00:0:110":
+    core: true
+  "1-ff00:0:111":
+    attachment_point: true
+
+  # User ASes have an owner (administrator or normal user)
+  "1-ff00:0:112":
+    owner: "user1"
+    ixps: ["ixp1", "ixp2"] # IXP membership has to be declared explicitly
+  "1-ff00:0:113":
+    owner: "user1"
+    ixps: ["ixp1", "ixp2"]
+
+  # ISD 2
+  "2-ff00:0:210":
+    core: true
+  "2-ff00:0:211":
+    attachment_point: true
+  "2-ff00:0:212":
+    owner: "user2"
+    ixps: ["ixp1", "ixp2"]
+  "2-ff00:0:213":
+    owner: "user2"
+    ixps: ["ixp1", "ixp2"]
+
+IXPs:
+  "ixp1":
+    network: "ixp1"
+  "ixp2":
+    network: "ixp2"
+
+links:
+  # Infrastructure
+  - {a: "1-ff00:0:110-br1", b: "2-ff00:0:210-br1", linkAtoB: CORE}
+  - {a: "1-ff00:0:110-br1", b: "1-ff00:0:111-br1", linkAtoB: CHILD}
+  - {a: "2-ff00:0:210-br1", b: "2-ff00:0:211-br1", linkAtoB: CHILD}
+
+  # User ASes must have exactly one link to an attachment point.
+  - {a: "1-ff00:0:111-user", b: "1-ff00:0:112", linkAtoB: CHILD}
+  - {a: "1-ff00:0:111-user", b: "1-ff00:0:113", linkAtoB: CHILD}
+  - {a: "2-ff00:0:211-user", b: "2-ff00:0:212", linkAtoB: CHILD}
+  - {a: "2-ff00:0:211-user", b: "2-ff00:0:213", linkAtoB: CHILD}
+
+  # IXP links are configured by the coordinator. Links added here will be static and not be effected
+  # by peering policies. The default border router used for automatically configured peering links
+  # is named 'peer'. By using this name here, we avoid creating an additional border router for
+  # static links.
+  - {a: "2-ff00:0:212-peer", b: "2-ff00:0:213-peer", linkAtoB: PEER, network: "ixp1"}

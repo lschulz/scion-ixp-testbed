@@ -1,0 +1,14 @@
+# For importing ISD_AS from SCION
+pycapnp
+pygments
+
+# Docker Python SDK
+docker
+
+# For generating SSH keys
+cryptography
+
+# SSH clients
+paramiko     # used by docker
+ssh2-python  # native backend of parallel-ssh
+parallel-ssh # can use paramiko and parallel-ssh as backends

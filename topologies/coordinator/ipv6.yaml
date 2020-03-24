@@ -1,0 +1,41 @@
+# SCION network using IPv6 as underlay protocol.
+
+defaults:
+  link_subnet: "fd00:72c2:d7f1:0000::/64"
+
+networks:
+  "coord":
+    type: "docker_bridge"
+    subnet: "10.1.2.0/24"
+  "links":
+    type: "docker_bridge"
+    subnet: "fd00:72c2:d7f1:0001::/64"
+
+coordinator:
+  network: "coord"
+  expose: "8000"
+  expose_on: "192.168.244.4"
+  users:
+    "admin":
+      email: "admin@example.com"
+      password: "admin"
+      superuser: true
+
+ASes:
+  "1-ff00:0:110":
+    core: true
+    attachment_point: true
+  "1-ff00:0:111":
+    owner: "admin"
+    ixps: ["ixp1"]
+  "1-ff00:0:112":
+    owner: "admin"
+    ixps: ["ixp1"]
+
+IXPs:
+  "ixp1":
+    network: "fd00:72c2:d7f1:ff01::/64"
+
+links:
+  - {a: "1-ff00:0:110-br1#1", b: "1-ff00:0:111-br1#1", linkAtoB: CHILD, network: "links"}
+  - {a: "1-ff00:0:110-br1#2", b: "1-ff00:0:112-br2#1", linkAtoB: CHILD, network: "links"}

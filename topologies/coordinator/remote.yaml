@@ -1,0 +1,71 @@
+# All ASes run on a remote host.
+
+defaults:
+  link_subnet: "10.1.1.0/24"
+
+hosts:
+  "host1":
+    ssh_host: "192.168.244.3"
+    username: "lars"
+    identity_file: "/home/lars/.ssh/id_rsa"
+
+networks:
+  "coord":
+    type: "docker_bridge"
+    subnet: "10.1.2.0/24"
+    host: "host1"
+  "ixp1":
+    type: "docker_bridge"
+    subnet: "10.1.3.0/24"
+    host: "host1"
+  "ixp2":
+    type: "docker_bridge"
+    subnet: "10.1.4.0/24"
+    host: "host1"
+
+coordinator:
+  network: "coord"
+  host: "host1"
+  expose: "8000"
+  expose_on: "192.168.244.3"
+  users:
+    "admin":
+      email: "admin@example.com"
+      password: "admin"
+      superuser: true
+    "user1":
+      email: "user1@example.com"
+      password: "user1"
+    "user2":
+      email: user2@example.com
+      password: "user2"
+
+ASes:
+  "1-ff00:0:110":
+    core: true
+    host: "host1"
+  "1-ff00:0:111":
+    cert_issuer: 1-ff00:0:110
+    attachment_point: true
+    host: "host1"
+  "1-ff00:0:112":
+    cert_issuer: 1-ff00:0:110
+    owner: "user1"
+    host: "host1"
+    ixps: ["ixp1", "ixp2"]
+  "1-ff00:0:113":
+    cert_issuer: 1-ff00:0:110
+    owner: "user1"
+    host: "host1"
+    ixps: ["ixp1", "ixp2"]
+
+IXPs:
+  "ixp1":
+    network: "ixp1"
+  "ixp2":
+    network: "ixp2"
+
+links:
+  - {a: "1-ff00:0:110", b: "1-ff00:0:111", linkAtoB: CHILD}
+  - {a: "1-ff00:0:111", b: "1-ff00:0:112", linkAtoB: CHILD}
+  - {a: "1-ff00:0:111", b: "1-ff00:0:113", linkAtoB: CHILD}
