@@ -53,6 +53,9 @@ class Bridge(ABC):
     def ip_network(self):
         return self._ip_network
 
+    def str(self):
+        return "{} [{}]".format(self._name, str(self._ip_network))
+
     def valid_ip_iter(self) -> Iterator[IpAddress]:
         """Returns an iterator over all valid host IP in the bridges IP subnet.
 

@@ -180,7 +180,7 @@ def create_as_mount_dirs_coord(workdir: Path, topo: Topology):
     :param topo: The topology database.
     """
     for isd_as, asys in topo.ases.items():
-        if asys.host.is_local():
+        if asys.host.is_local:
             output_path = workdir.joinpath(isd_as.file_fmt())
 
             # Create AS output directory

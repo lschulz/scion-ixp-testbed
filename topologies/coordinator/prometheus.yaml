@@ -1,0 +1,88 @@
+defaults:
+  link_subnet: "10.1.1.0/24"
+
+networks:
+  "coord":
+    type: "docker_bridge"
+    subnet: "10.1.2.0/24"
+  "ixp1":
+    type: "docker_bridge"
+    subnet: "10.1.3.0/24"
+  "ixp2":
+    type: "docker_bridge"
+    subnet: "10.1.4.0/24"
+
+coordinator:
+  network: "coord"
+  expose: "8000"
+  expose_on: "192.168.244.4"
+  users:
+    "admin":
+      email: "admin@example.com"
+      password: "admin"
+      superuser: true
+    "user1":
+      email: "user1@example.com"
+      password: "user1"
+    "user2":
+      email: user2@example.com
+      password: "user2"
+
+# If a 'prometheus' section is present, a container running a Prometheus server is set up.
+prometheus:
+  # Network must be a Docker bridge or overlay network. All target ASes must be reachable on the
+  # network, therefore the coordinator network is usually the best (or only) choice.
+  network: "coord"
+  host: "localhost"
+
+  # The prometheus server will be reachable at http://192.168.244.4:8000.
+  expose: 9090
+  expose_on: "192.168.244.4"
+
+  scrape_interval: 5s # Interval in which metrics are collected.
+
+  # List of ASes to collect metric from.
+  targets:
+    - "1-ff00:0:110"
+    - "1-ff00:0:111"
+    - "1-ff00:0:112"
+
+ASes:
+  # ISD 1
+  "1-ff00:0:110":
+    core: true
+  "1-ff00:0:111":
+    attachment_point: true
+  "1-ff00:0:112":
+    owner: "user1"
+    ixps: ["ixp1", "ixp2"]
+  "1-ff00:0:113":
+    owner: "user1"
+    ixps: ["ixp1", "ixp2"]
+
+  # ISD 2
+  "2-ff00:0:210":
+    core: true
+  "2-ff00:0:211":
+    attachment_point: true
+  "2-ff00:0:212":
+    owner: "user2"
+    ixps: ["ixp1", "ixp2"]
+  "2-ff00:0:213":
+    owner: "user2"
+    ixps: ["ixp1", "ixp2"]
+
+IXPs:
+  "ixp1":
+    network: "ixp1"
+  "ixp2":
+    network: "ixp2"
+
+links:
+  - {a: "1-ff00:0:110-br1", b: "2-ff00:0:210-br1", linkAtoB: CORE}
+  - {a: "1-ff00:0:110-br1", b: "1-ff00:0:111-br1", linkAtoB: CHILD}
+  - {a: "2-ff00:0:210-br1", b: "2-ff00:0:211-br1", linkAtoB: CHILD}
+  - {a: "1-ff00:0:111-user", b: "1-ff00:0:112", linkAtoB: CHILD}
+  - {a: "1-ff00:0:111-user", b: "1-ff00:0:113", linkAtoB: CHILD}
+  - {a: "2-ff00:0:211-user", b: "2-ff00:0:212", linkAtoB: CHILD}
+  - {a: "2-ff00:0:211-user", b: "2-ff00:0:213", linkAtoB: CHILD}

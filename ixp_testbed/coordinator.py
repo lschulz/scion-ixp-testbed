@@ -54,7 +54,7 @@ class Coordinator:
     :ivar _initialized: Flag indicating whether the coordinator has been initialized.
     """
     def __init__(self, host: Host, bridge: Bridge):
-        self.host: Host = host
+        self.host = host
         self.bridge = bridge
         self.exposed_at: Optional[UnderlayAddress] = None
         self.container_id: Optional[str] = None

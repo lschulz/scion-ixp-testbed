@@ -18,6 +18,7 @@ from ixp_testbed.host import Host, push_docker_image, scan_hosts
 from ixp_testbed.network.bridge import (
     Bridge, connect_bridges, disconnect_bridges, get_published_ports)
 from ixp_testbed.scion import AS, Link
+from ixp_testbed.service import ContainerizedService
 from ixp_testbed.util.docker import (
     format_published_ports, invoke_scion_docker_script, run_cmd_in_cntr, run_cmd_in_cntrs,
     run_cmds_in_cntrs)
@@ -49,6 +50,7 @@ class Topology:
                                specified per link.
     :ivar ipv6_enabled: Whether to enabled IPv6 in Docker.
     :ivar coordinator: The optional SCIONLab Coordinator managing the network.
+    :ivar additional_services: Additional services to run in the network.
     """
     def __init__(self, name: Optional[str] = None):
         self.name: Optional[str] = name
@@ -60,6 +62,7 @@ class Topology:
         self.default_link_subnet: Optional[IpNetwork] = None
         self.ipv6_enabled = False
         self.coordinator: Optional[Coordinator] = None
+        self.additional_services: List[ContainerizedService] = []
 
 
     def save(self, file_path) -> None:
@@ -163,6 +166,9 @@ class Topology:
             self.coordinator.start(self.get_coord_cntr_name())
             self.coordinator.init(self, workdir) # Make sure the coordinator is initialized
 
+        for service in self.additional_services:
+            service.start(self.get_name_prefix(), workdir)
+
 
     def _start_container(self, isd_as: ISD_AS, asys: AS, workdir: Path, sc: Path) -> None:
         """Start the Docker container hosting the given AS and connect it to the necessary bridges.
@@ -195,7 +201,7 @@ class Topology:
                 cntr_port, cntr_name, host_ip, host_port, asys.host.name)
 
         cntr = None
-        if asys.host.is_local():
+        if asys.host.is_local:
             mount_dir = workdir.joinpath(isd_as.file_fmt()).resolve()
             if self.coordinator is not None:
                 # Starting a new instance of the coordinator generates new configuration files,
@@ -245,6 +251,9 @@ class Topology:
 
     def stop_containers(self) -> None:
         """Stop and remove all containers created by start_containers()."""
+        for service in self.additional_services:
+            service.stop()
+
         if self.coordinator is not None:
             self.coordinator.stop()
 
@@ -442,7 +451,15 @@ class Topology:
                 dc = coord.host.docker_client
                 cntr = self._get_container_by_id(cntr_name, coord.container_id, dc)
                 status = cntr.status
-            print("### Coordinator: {} ({})".format(status, cntr_name), file=out)
+            out.write("### Coordinator: {} ({})\n".format(status, cntr_name))
+
+        for service in self.additional_services:
+            status = "no container"
+            cntr = service.get_container()
+            if cntr is not None:
+                out.write("### {}: {} ({})\n".format(service.name, cntr.status, cntr.name))
+            else:
+                out.write("### {}: no container\n".format(service.name))
 
         for isd_as, asys in self.ases.items():
             cntr_name = self.get_cntr_name(isd_as)
@@ -455,11 +472,11 @@ class Topology:
                 if cntr is not None:
                     status = cntr.status
 
-            print("### AS{} : {} ({})".format(isd_as, status, cntr_name), file=out)
+            out.write("### AS{} : {} ({})\n".format(isd_as, status, cntr_name))
             if cntr and cntr.status == "running":
                 exit_code, response = cntr.exec_run(
                     "/bin/bash -l -c './scion.sh status'", user=const.SCION_USER, tty=True)
-                print(response.decode('utf-8'), end='', file=out)
+                out.write(response.decode('utf-8'))
 
 
     def _push_docker_image(self, workdir: Path) -> None:
@@ -477,7 +494,7 @@ class Topology:
 
     def _push_coord_image(self, workdir: Path) -> None:
         """Make sure the host which is supposed to run the coordinator has the coordinator image."""
-        if self.coordinator.host.is_local():
+        if self.coordinator.host.is_local:
             return
 
         local_dc = self.hosts['localhost'].docker_client

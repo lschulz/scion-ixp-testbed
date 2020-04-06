@@ -9,7 +9,6 @@ import yaml
 
 from ixp_testbed import errors
 from ixp_testbed.address import IfId, L4Port, UnderlayAddress
-from ixp_testbed.coordinator import User
 from ixp_testbed.gen.addr_alloc import assign_underlay_addresses
 from ixp_testbed.gen.generator import extract_topo_info
 from ixp_testbed.host import LocalHost, RemoteHost
@@ -17,6 +16,7 @@ from ixp_testbed.network.docker import OverlayNetwork
 from ixp_testbed.network.docker import DockerBridge
 from ixp_testbed.network.host import HostNetwork
 from ixp_testbed.network.ovs_bridge import OvsBridge
+from ixp_testbed.prometheus import Prometheus
 from ixp_testbed.scion import LinkEp
 
 
@@ -72,6 +72,16 @@ coordinator:
     "user2":
       email: user2@example.com
       password: "user2"
+prometheus:
+  network: "overlay_bridge1"
+  host: "localhost"
+  expose: 9090
+  expose_on: "192.168.244.2"
+  scrape_interval: 5s
+  targets:
+    - "1-ff00:0:110"
+    - "1-ff00:0:111"
+    - "1-ff00:0:112"
 ASes:
   "1-ff00:0:110":
     core: true
@@ -195,6 +205,19 @@ class TestExtractTopoInfo(unittest.TestCase):
         self.assertEqual(user.email, "user2@example.com")
         self.assertEqual(user.password, "user2")
         self.assertFalse(user.is_admin)
+
+        # Prometheus
+        self.assertEqual(len(topo.additional_services), 1)
+        prom = cast(Prometheus, topo.additional_services[0])
+        self.assertIs(prom.bridge, topo.get_bridge_name("overlay_bridge1"))
+        self.assertEqual(prom.host, topo.hosts['localhost'])
+        expected = UnderlayAddress(ipaddress.ip_address("192.168.244.2"), L4Port(9090))
+        self.assertEqual(prom.exposed_at, expected)
+
+        self.assertEqual(prom.scrape_interval, "5s")
+        self.assertIn(ISD_AS("1-ff00:0:110"), prom.targets)
+        self.assertIn(ISD_AS("1-ff00:0:111"), prom.targets)
+        self.assertIn(ISD_AS("1-ff00:0:112"), prom.targets)
 
         # ASes
         self.assertEqual(len(topo.ases), 8)

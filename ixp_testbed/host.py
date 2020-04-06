@@ -44,6 +44,7 @@ class Host(ABC):
         """Returns a Docker client instance connected to the host."""
         raise NotImplementedError()
 
+    @property
     @abstractmethod
     def is_local(self) -> bool:
         """Whether this is the local computer."""
@@ -99,6 +100,7 @@ class LocalHost(Host):
             self._dc = docker.from_env(timeout=120)
         return self._dc
 
+    @property
     def is_local(self):
         return True
 
@@ -141,6 +143,7 @@ class RemoteHost(Host):
     :ivar _identity_file: The location of the private key to be used for login. If no key is given,
                           ssh-agent is used for authentication.
     :ivar _ssh_session: Cached SSH connection.
+    :ivar _sftp_session: Cached SFTP session.
     :ivar _dc: Cached Docker client.
     """
     def __init__(self, name: str, ssh_host: IpAddress, username: str, *,
@@ -152,12 +155,14 @@ class RemoteHost(Host):
         self._username = username
         self._identity_file = identity_file
         self._ssh_session: Optional[Session] = None
+        self._sftp_session: Optional[ssh2.sftp.SFTP] = None
         self._dc: docker.DockerClient = None
 
     def __getstate__(self):
         state = self.__dict__.copy()
         # Don't attempt to serialize the SSH session or Docker client.
         state['_ssh_session'] = None
+        state['_sftp_session'] = None
         state['_dc'] = None
         return state
 
@@ -165,6 +170,7 @@ class RemoteHost(Host):
     def name(self):
         return self._name
 
+    @property
     def is_local(self):
         return False
 
@@ -221,10 +227,79 @@ class RemoteHost(Host):
             return CompletedProcess(exit_code, output)
 
 
+    def mkdir(self, path, mode=0o777):
+        """Create a directory on the remote host.
+
+        :param path: Path of the new directory.
+        :param mode: Permissions the directory is created with.
+        :returns: True on success, false on failure.
+        """
+        sftp = self._get_sftp_session()
+        res = sftp.mkdir(path, mode)
+        return self._ssh2_check_success(res)
+
+
+    def rmdir(self, path):
+        """Remove a directory om the remote host.
+
+        :param path: Path to the directory to be deleted.
+        :returns: True on success, false on failure.
+        """
+        sftp = self._get_sftp_session()
+        res = sftp.rmdir(path)
+        return self._ssh2_check_success(res)
+
+
+    def open_file(self, filename, mode='r', file_mode=0o644):
+        """Open a file on the remote host.
+
+        :param filename: Path to the file.
+        :param mode: Mode in which the file is opened. Similar to built-in function `open`.
+        :param file_mode: Permissions a new file is created with.
+        """
+        flags = 0
+        if 'r' in mode:
+            flags |= ssh2.sftp.LIBSSH2_FXF_READ
+        if 'w' in mode:
+            flags |= ssh2.sftp.LIBSSH2_FXF_WRITE | ssh2.sftp.LIBSSH2_FXF_CREAT
+        if 'a' in mode:
+            flags |= ssh2.sftp.LIBSSH2_FXF_APPEND | ssh2.sftp.LIBSSH2_FXF_CREAT
+        if 'x' in mode:
+            flags |= ssh2.sftp.LIBSSH2_FXF_EXCL | ssh2.sftp.LIBSSH2_FXF_CREAT
+        if 't' in mode:
+            flags |= ssh2.sftp.LIBSSH2_FXF_TRUNC | ssh2.sftp.LIBSSH2_FXF_CREAT
+
+        sftp = self._get_sftp_session()
+        return sftp.open(filename, flags, file_mode)
+
+
+    def delete_file(self, filename):
+        """Delete a file on the remote host.
+
+        :param filename: Path to the file.
+        :returns: True on success, false on failure.
+        """
+        sftp = self._get_sftp_session()
+        res = sftp.unlink(filename)
+        return self._ssh2_check_success(res)
+
+
+    @staticmethod
+    def _ssh2_check_success(ret):
+        # Interpret LIBSSH2_ERROR_EAGAIN as success.
+        return ret == 0 or ret == ssh2.error_codes.LIBSSH2_ERROR_EAGAIN
+
+
     def _get_ssh_session(self):
         if self._ssh_session is None:
             self._ssh_session = self._establish_ssh_session()
         return self._ssh_session
+
+
+    def _get_sftp_session(self):
+        if self._sftp_session is None:
+            self._sftp_session = self._get_ssh_session().sftp_init()
+        return self._sftp_session
 
 
     def _establish_ssh_session(self):
@@ -311,7 +386,7 @@ def scan_hosts(hosts: Iterable[Host], local_image) -> List[RemoteHost]:
     """
     hosts_to_update: List[RemoteHost] = []
 
-    for host in filter(lambda h: not h.is_local(), hosts):
+    for host in filter(lambda h: not h.is_local, hosts):
         dc = host.docker_client
         update_image = False
         try:

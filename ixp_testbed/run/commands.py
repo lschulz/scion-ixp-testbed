@@ -278,7 +278,7 @@ def _get_link_from_args(topo: Topology, args):
     if ixp is None or as_a is None or as_b is None:
         return None
 
-    if not as_a.host.is_local() or not as_b.host.is_local():
+    if not as_a.host.is_local or not as_b.host.is_local:
         print("ASes must run on localhost.")
         return None
 

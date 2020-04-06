@@ -7,26 +7,31 @@ import logging
 import os
 from pathlib import Path
 import sys
-from typing import Any, Callable, DefaultDict, Dict, List, Mapping, MutableMapping, Optional, Tuple
+from typing import (
+    Any, Callable, DefaultDict, Dict, List, Mapping, MutableMapping, Optional,
+    Tuple, cast)
+
+import docker
+import yaml
 
 from lib.packet.scion_addr import ISD_AS
 from lib.types import LinkType
 from lib.util import load_yaml_file
-import yaml
 
-import docker
 from ixp_testbed import errors
 from ixp_testbed.address import IfId, IpNetwork, L4Port, UnderlayAddress
 import ixp_testbed.constants as const
 from ixp_testbed.coordinator import Coordinator, User
+from ixp_testbed.errors import InvalidTopo
 import ixp_testbed.gen.addr_alloc as addr_alloc
 import ixp_testbed.gen.gen_dir as gen_dir
 from ixp_testbed.gen.interfaces import pick_unused_ifid
 from ixp_testbed.host import Host, LocalHost, RemoteHost
 from ixp_testbed.network.bridge import Bridge
-from ixp_testbed.network.docker import DockerBridge, OverlayNetwork
+from ixp_testbed.network.docker import DockerBridge, DockerNetwork, OverlayNetwork
 from ixp_testbed.network.host import HostNetwork
 from ixp_testbed.network.ovs_bridge import OvsBridge
+from ixp_testbed.prometheus import Prometheus
 from ixp_testbed.scion import AS, BorderRouter, Link, LinkEp
 from ixp_testbed.topology import Ixp, Topology
 from ixp_testbed.util import crypto
@@ -162,11 +167,7 @@ def extract_topo_info(topo_file: MutableMapping[str, Any], name: Optional[str] =
         def_name = lambda: topo.get_name_prefix() + const.COORD_NET_NAME
         bridge = networks.get(_get_value(coord_def, 'network', 'coordinator'), def_name, localhost)
         coord = Coordinator(host, bridge)
-
-        if 'expose' in coord_def:
-            ip = ipaddress.ip_address(coord_def.get('expose_on', '0.0.0.0'))
-            port = L4Port(int(coord_def['expose']))
-            coord.exposed_at = UnderlayAddress(ip, port)
+        coord.exposed_at = _get_external_address(coord_def)
 
         for name, data in coord_def['users'].items():
             if name is None:
@@ -175,6 +176,24 @@ def extract_topo_info(topo_file: MutableMapping[str, Any], name: Optional[str] =
             coord.users[name] = User(data['email'], data['password'], data.get('superuser', False))
 
         topo.coordinator = coord
+
+    # Prometheus
+    if 'prometheus' in topo_file:
+        prom_def = topo_file.pop('prometheus') # remove prometheus section
+        host = topo.hosts[prom_def.get('host', 'localhost')]
+
+        def_name = lambda: topo.gen_bridge_name()
+        bridge = networks.get(_get_value(prom_def, 'network', 'coordinator'), def_name, localhost)
+        if not bridge.is_docker_managed:
+            log.error("Invalid network type for Prometheus.")
+            raise InvalidTopo()
+
+        prom = Prometheus(host, cast(DockerNetwork, bridge),
+            scrape_interval=prom_def.get('scrape_interval', "30s"),
+            targets=[ISD_AS(target) for target in prom_def['targets']])
+        prom.exposed_at = _get_external_address(prom_def)
+
+        topo.additional_services.append(prom)
 
     # IXP definitions
     for ixp_name, ixp_def in topo_file.pop('IXPs', {}).items(): # remove IXP section
@@ -281,6 +300,19 @@ def _get_ip(dict, key, name):
     except ValueError:
         log.error("Invalid IP address in '%s': '%s'.", name, raw)
         raise
+
+
+def _get_external_address(dict) -> Optional[UnderlayAddress]:
+    """Parse the address a service is supposed to be exposed on.
+
+    :param dict: Mapping to retrieve the address from.
+    :returns: None, if no address is given in `dict`.
+    """
+    if 'expose' in dict:
+        ip = ipaddress.ip_address(dict.get('expose_on', '0.0.0.0'))
+        port = L4Port(int(dict['expose']))
+        return UnderlayAddress(ip, port)
+    return None
 
 
 class NetworkFactory:

@@ -59,6 +59,9 @@ class TestExtractTopoInfo(unittest.TestCase):
         topo = extract_topo_info(topo_file)
         ASES = [ISD_AS("1-ff00:0:110"), ISD_AS("1-ff00:0:111"), ISD_AS("1-ff00:0:112")]
 
+        self.assertIsNone(topo.coordinator)
+        self.assertEqual(len(topo.additional_services), 0)
+
         # IPv6
         self.assertFalse(topo.ipv6_enabled)
 

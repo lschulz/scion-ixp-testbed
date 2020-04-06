@@ -222,6 +222,13 @@ respectively. For example:
 ./ixp-testbed.py stats -i 10 -c 1 -p '1-ff00:0:...' --services bin/border bin/beacon_srv bin/path_srv
 ```
 
+### Monitoring AS metrics
+The SCION border routers, and the beacon, path, and certificate servers expose
+[Prometheus](https://prometheus.io/) metrics. A containerized Prometheus server scraping these
+metrics can be configured in the topology file. At the moment only beacon, path, and certificate
+server metrics are supported.
+Example: [topologies/coordinator/prometheus.yaml](/topologies/coordinator/prometheus.yaml)
+
 Development
 -----------
 ### Running the tests
