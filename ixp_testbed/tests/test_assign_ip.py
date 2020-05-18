@@ -2,11 +2,10 @@ import ipaddress
 import logging
 import unittest
 
-from lib.packet.scion_addr import ISD_AS
 import yaml
 
 from ixp_testbed import errors
-from ixp_testbed.address import IfId, L4Port, UnderlayAddress
+from ixp_testbed.address import IfId, ISD_AS, L4Port, UnderlayAddress
 from ixp_testbed.gen.addr_alloc import assign_underlay_addresses, check_subnet_overlap
 from ixp_testbed.gen.generator import extract_topo_info
 from ixp_testbed.network.docker import DockerBridge
@@ -58,7 +57,7 @@ CAs:
 class TestAssignIpAddresses(unittest.TestCase):
     def setUp(self):
         logging.disable(logging.CRITICAL)
-        topo_file = yaml.load(TEST_TOPO)
+        topo_file = yaml.safe_load(TEST_TOPO)
         self.topo = extract_topo_info(topo_file)
 
 
@@ -130,7 +129,7 @@ class TestAssignIpAddresses(unittest.TestCase):
 
     def test_invalid_subnet(self):
         """Test an invalid link subnet."""
-        topo_file = yaml.load(TEST_TOPO)
+        topo_file = yaml.safe_load(TEST_TOPO)
         self.topo = extract_topo_info(topo_file)
         topo_file['links'][1]['network'] = "10.0.11.0/30"
         topo = extract_topo_info(topo_file)

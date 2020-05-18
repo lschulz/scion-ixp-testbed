@@ -17,10 +17,10 @@ networks:
 coordinator:
   network: "coord" # Could specify "10.1.2.0/24" directly and remove 'coord' from networks.
 
-  # The coordinator will be reachable at http://192.168.244.4:8000.
+  # The coordinator will be reachable at http://192.168.244.2:8000.
   # Make sure the coordinator is not exposed to the Internet!
   expose: "8000"
-  expose_on: "192.168.244.4"
+  expose_on: "192.168.244.2"
 
   # Users configured in the coordinator
   users:
@@ -75,7 +75,7 @@ links:
   - {a: "1-ff00:0:110-br1", b: "1-ff00:0:111-br1", linkAtoB: CHILD}
   - {a: "2-ff00:0:210-br1", b: "2-ff00:0:211-br1", linkAtoB: CHILD}
 
-  # User ASes must have exactly one link to an attachment point.
+  # User ASes should have at least one link to an attachment point.
   - {a: "1-ff00:0:111-user", b: "1-ff00:0:112", linkAtoB: CHILD}
   - {a: "1-ff00:0:111-user", b: "1-ff00:0:113", linkAtoB: CHILD}
   - {a: "2-ff00:0:211-user", b: "2-ff00:0:212", linkAtoB: CHILD}

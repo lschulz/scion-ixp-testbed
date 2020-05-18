@@ -4,7 +4,7 @@ USER scion
 RUN sudo apt update
 
 # Install 'ip' and 'ping' commands.
-RUN sudo apt-get install -y iproute2 iputils-ping
+RUN sudo apt-get install -y iproute2 iputils-ping python
 
 # Install modified scionlab-config script.
 COPY --chown=scion:users scionlab-config-user /home/scion/go/src/github.com/scionproto/scion/

@@ -14,12 +14,11 @@ from typing import (
 import docker
 import yaml
 
-from lib.packet.scion_addr import ISD_AS
 from lib.types import LinkType
 from lib.util import load_yaml_file
 
 from ixp_testbed import errors
-from ixp_testbed.address import IfId, IpNetwork, L4Port, UnderlayAddress
+from ixp_testbed.address import IfId, IpNetwork, ISD_AS, L4Port, UnderlayAddress
 import ixp_testbed.constants as const
 from ixp_testbed.coordinator import Coordinator, User
 from ixp_testbed.errors import InvalidTopo
@@ -91,7 +90,9 @@ def generate(name: Optional[str], input_file_path: Path, workdir: Path, sc: Path
 
     if topo.coordinator is None:
         # Modify topology.json files and create mount folder for all AS containers.
-        gen_dir.modify_topo_files(workdir.joinpath(const.MASTER_CNTR_MOUNT, "gen"), topo)
+        gen_path = workdir.joinpath(const.MASTER_CNTR_MOUNT, "gen")
+        gen_dir.modify_topo_files(gen_path, topo)
+        gen_dir.modify_sciond_address(gen_path, topo)
         gen_dir.create_as_mount_dirs(workdir, topo)
     else:
         # Create mount folders for local ASes.
@@ -232,7 +233,7 @@ def extract_topo_info(topo_file: MutableMapping[str, Any], name: Optional[str] =
                 # Actual links will be configured by the coordinator.
                 # The border router of the link endpoint is labeled here to avoid creating a new
                 # border router for every IXP link.
-                end_point = LinkEp.Construct(isd_as, ifid=ifids.assign_ifid(isd_as), br_label='peer')
+                end_point = LinkEp(isd_as, ifid=ifids.assign_ifid(isd_as), br_label='peer')
                 link = Link(end_point, LinkEp(), LinkType.UNSET)
                 link.bridge = ixp.bridge
                 topo.links.append(link)
@@ -528,9 +529,7 @@ def _build_standalone_topology(topo: Topology, sc: Path, workdir: Path, dc: dock
 
         # Build a standalone topology in the master container
         log.info("Building standalone topology...")
-        command = "./scion.sh topology nobuild -c topology/topology.topo"
-        if topo.ipv6_enabled:
-            command += " --ipv6"
+        command = "./scion.sh topology -c topology/topology.topo"
         run_cmd_in_cntr(master_cntr, const.SCION_USER, command, check=True)
     except:
         raise

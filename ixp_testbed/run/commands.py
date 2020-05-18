@@ -6,8 +6,8 @@ import sys
 
 import docker
 from lib.errors import SCIONParseError
-from lib.packet.scion_addr import ISD_AS
 
+from ixp_testbed.address import ISD_AS
 from ixp_testbed.constants import CONFIG_DATA_FILE
 from ixp_testbed.run.exec import fetch_config, run_in_matching_cntrs
 import ixp_testbed.run.links as links

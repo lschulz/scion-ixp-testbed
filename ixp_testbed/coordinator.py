@@ -5,14 +5,13 @@ import io
 import json
 import logging
 from pathlib import Path
-from typing import Dict, NamedTuple, Optional, Tuple
+from typing import Dict, List, NamedTuple, Optional, Tuple
 
 import docker
-from lib.packet.scion_addr import ISD_AS
 from lib.types import LinkType
 
 from ixp_testbed import constants as const
-from ixp_testbed.address import IfId, L4Port, UnderlayAddress
+from ixp_testbed.address import IfId, ISD_AS, L4Port, UnderlayAddress
 from ixp_testbed.host import Host
 from ixp_testbed.network.bridge import Bridge
 from ixp_testbed.scion import AS, Link
@@ -156,7 +155,7 @@ class Coordinator:
 
         uid, secret = self.api_credentials[isd_as]
         req_params = ("?ixp=%s" % ixp_id) if ixp_id is not None else ""
-        cmd = "curl -X GET {base_url}/api/host/{host}/peers{params}" \
+        cmd = "curl -X GET {base_url}/api/peering/host/{host}/peers{params}" \
               " -u {host}:{secret}".format(
                   base_url=self.get_url(), params=req_params, host=uid, secret=secret)
         response = io.StringIO()
@@ -182,7 +181,7 @@ class Coordinator:
 
         uid, secret = self.api_credentials[isd_as]
         req_params = ("?ixp=%s" % ixp_id) if ixp_id is not None else ""
-        cmd = "curl -X GET {base_url}/api/host/{host}/peering_policies{params}" \
+        cmd = "curl -X GET {base_url}/api/peering/host/{host}/policies{params}" \
               " -u {host}:{secret}".format(
                   base_url=self.get_url(), params=req_params, host=uid, secret=secret)
         response = io.StringIO()
@@ -205,7 +204,7 @@ class Coordinator:
             return ""
 
         uid, secret = self.api_credentials[isd_as]
-        cmd = "curl -X POST {base_url}/api/host/{host}/peering_policies" \
+        cmd = "curl -X POST {base_url}/api/peering/host/{host}/policies" \
               " -u {host}:{secret} -d \"{policies}\" -i".format(
                   base_url=self.get_url(), host=uid, secret=secret,
                   policies=policies.replace("'", "\"").replace('"', '\\"'))
@@ -228,7 +227,7 @@ class Coordinator:
             return ""
 
         uid, secret = self.api_credentials[isd_as]
-        cmd = "curl -X DELETE {base_url}/api/host/{host}/peering_policies" \
+        cmd = "curl -X DELETE {base_url}/api/peering/host/{host}/policies" \
               " -u {host}:{secret} -d \"{policies}\" -i".format(
                   base_url=self.get_url(), host=uid, secret=secret,
                   policies=policies.replace("'", "\"").replace('"', '\\"'))
@@ -323,8 +322,8 @@ def _create_config_script(topo, out) -> None:
     # Imports
     out.write("from scionlab.models.core import AS, BorderRouter, Host, Interface, ISD, Link\n")
     out.write("from scionlab.models.user import User\n")
-    out.write("from scionlab.models.user_as import AttachmentPoint, UserAS\n")
-    out.write("from scionlab.models.ixp import IXP, IXPMember\n")
+    out.write("from scionlab.models.user_as import AttachmentConf, AttachmentPoint, UserAS\n")
+    out.write("from scionlab_ixp.models import IXP, IXPMember\n")
 
     # Create users
     for user in topo.coordinator.users.values():
@@ -364,8 +363,8 @@ def _create_config_script(topo, out) -> None:
 
     # Create infrastructure links
     for link in topo.links:
-        if link.ep_a.is_zero() or link.ep_b.is_zero():
-            continue # dummy links
+        if link.is_dummy():
+            continue
         if topo.ases[link.ep_a].is_user_as() or topo.ases[link.ep_b].is_user_as():
             continue # links to or between user ASes
         _gen_create_link(link, out)
@@ -379,45 +378,59 @@ def _create_config_script(topo, out) -> None:
     # Create user ASes
     for isd_as, asys in topo.ases.items():
         if asys.is_user_as():
-            ap_ifid, ap_link = _get_ap_link(topo, asys)
-            if ap_link is None:
-                log.warning("User AS {} is not attached to infrastructure.".format(isd_as))
-                continue
-
-            # Create the user AS. This also creates the BR connecting to the AP.
-            local_addr, remote_addr = ap_link.get_underlay_addresses(isd_as)
-            bind_ip_str, bind_port_str = _format_underlay_addr(
-                ap_link.bridge.get_br_bind_address(isd_as, asys, ap_ifid))
-            ap = ap_link.get_other_endpoint(isd_as)
-
-            _gen_get_as("asys", ap, out)
+            # Create the user AS without any border routers and links.
             out.write("user = User.objects.get(email='%s')\n" % topo.coordinator.users[asys.owner].email)
-            out.write("ap = AttachmentPoint.objects.get(AS=asys)\n")
+            out.write("isd = ISD.objects.get(isd_id=%s)\n" % isd_as.isd_str())
+            out.write("asys = UserAS.objects.create(user, UserAS.SRC, isd, '{as_id}')\n".format(
+                as_id=isd_as.as_str()
+            ))
 
-            out.write(
-                ("asys = UserAS.objects.create(user, ap, {local_port}, UserAS.SRC, as_id='{isd_as}',"
-                 " public_ip='{local_ip}', bind_ip={bind_ip}, bind_port={bind_port},"
-                 " public_ip_ap='{remote_ip}', public_port_ap='{remote_port}')\n").format(
-                     isd_as=isd_as.as_str(),
-                     local_ip=local_addr.ip,
-                     local_port=local_addr.port,
-                     bind_ip = bind_ip_str,
-                     bind_port = bind_port_str,
-                     remote_ip=remote_addr.ip,
-                     remote_port=remote_addr.port
-                 ))
+            # Create links to the attachment points. All attachment point links use the first BR of
+            # the user AS. Border routers on the AP's side are created and destroyed dynamically by
+            # the coordinator to balance the number of links per router.
+            attachmentLinks = _get_ap_links(topo, asys)
+            if len(attachmentLinks) == 0:
+                log.warning("User AS {} is not attached to infrastructure.".format(isd_as))
 
-            # Get the BR created by UserAS.objects.create().
-            out.write("br = BorderRouter.objects.get(host__AS=asys)\n")
+            out.write("attachments = []\n")
+            for attach in attachmentLinks:
+                out.write("ap = AttachmentPoint.objects.get(AS__as_id='%s')\n" % attach.ap_id.as_str())
+                user_bind_ip, user_bind_port = _format_underlay_addr(attach.user_bind_addr)
+                out.write(
+                    "attachments.append(AttachmentConf(ap, '{public_ip}', {public_port},"
+                    " {bind_ip}, {bind_port}, use_vpn=False))\n".format(
+                        public_ip=attach.user_public_addr.ip,
+                        public_port=attach.user_public_addr.port,
+                        bind_ip=user_bind_ip,
+                        bind_port=user_bind_port
+                    ))
+            out.write("asys.update_attachments(attachments)\n")
 
-            # Change the interface ID of the AP interface to match our topology.
-            out.write("Interface.objects.filter(AS=asys).update(interface_id=%d)\n" % ap_ifid)
+            # Update the interfaces created by the coordinator.
+            for i, attach in enumerate(attachmentLinks):
+                out.write("link = attachments[%d].link\n" % i)
 
-            # Create the remaining interfaces of the BR connecting to the AP.
-            ap_br = asys.get_border_router(ap_ifid)
-            for ifid, link in ap_br.links.items():
-                if ifid != ap_ifid:
-                    _gen_create_interfaces(isd_as, asys, link, ifid, out)
+                # Set the correct IP address and port and the AP side of the link.
+                ap_bind_ip, ap_bind_port = _format_underlay_addr(attach.ap_bind_addr)
+                out.write("link.interfaceA.update(public_ip='{public_ip}', public_port={public_port},"
+                    " bind_ip={bind_ip}, bind_port={bind_port})\n".format(
+                        public_ip=attach.ap_public_addr.ip,
+                        public_port=attach.ap_public_addr.port,
+                        bind_ip=ap_bind_ip,
+                        bind_port=ap_bind_port
+                    ))
+
+                # Change the interface ID at the user AS to match our topology.
+                out.write("link.interfaceB.interface_id=%d\n" % attach.user_ifid)
+                out.write("link.interfaceB.save()\n")
+
+            # Create the remaining interfaces of the BR connecting to the APs.
+            ap_br = None # BR in the user AS connecting to the AP
+            if len(attachmentLinks) > 0:
+                ap_br = asys.get_border_router(attachmentLinks[0].user_ifid)
+                for ifid, link in ap_br.links.items():
+                    if not link.is_dummy() and ifid != attachmentLinks[0].user_ifid:
+                        _gen_create_interfaces(isd_as, asys, link, ifid, out)
 
             # Create the remaining BRs and their interfaces.
             if len(asys.border_routers) > 1:
@@ -426,12 +439,13 @@ def _create_config_script(topo, out) -> None:
                     if br is not ap_br:
                         out.write("br = BorderRouter.objects.create(host)\n")
                         for ifid, link in br.links.items():
-                            _gen_create_interfaces(isd_as, asys, link, ifid, out)
+                            if not link.is_dummy():
+                                _gen_create_interfaces(isd_as, asys, link, ifid, out)
 
     # Create links between user ASes
     for link in topo.links:
-        if link.ep_a.is_zero() or link.ep_b.is_zero():
-            continue # dummy links
+        if link.is_dummy():
+            continue
         if topo.ases[link.ep_a].is_user_as() and topo.ases[link.ep_b].is_user_as():
             _gen_create_link(link, out)
 
@@ -487,8 +501,8 @@ def _gen_create_link(link: Link, out) -> None:
 
     :param out: Stream the generated code is written to.
     """
-    _gen_get_iface('a', link.ep_a, link.ep_a.ifid, out)
-    _gen_get_iface('b', link.ep_b, link.ep_b.ifid, out)
+    _gen_get_iface('a', link.ep_a, unwrap(link.ep_a.ifid), out)
+    _gen_get_iface('b', link.ep_b, unwrap(link.ep_b.ifid), out)
     if link.type != LinkType.PARENT:
         out.write("Link.objects.create(%s, a, b)\n" % _get_link_type_constant(link.type))
     else:
@@ -514,20 +528,41 @@ def _get_link_type_constant(link_type: str) -> str:
         raise KeyError()
 
 
-def _get_ap_link(topo, user_as: AS):
-    """Get the link connecting a user AS to its attachment point.
+class AttachmentLink(NamedTuple):
+    user_ifid: IfId                   # Interface ID in the user AS
+    user_public_addr: UnderlayAddress # IP address and port the BR in the user AS is reachable at
+    user_bind_addr: Optional[UnderlayAddress] # IP address and port the BR in the use AS listens on
 
-    Every user AS should have exactly one link connecting it to an AP.
+    ap_id: ISD_AS                     # ISD-AS ID of the attachment point
+    ap_public_addr: UnderlayAddress   # IP address and port the BR router in the AP is reachable at
+    ap_bind_addr: Optional[UnderlayAddress] # IP address and port the BR in the AP listens on
 
-    :return: Tuple of the interface ID on the user AS's side and the link to the AP.
-             Returns `(None, None)` if there is no link to an attachment point.
-    """
-    for ifid, link in user_as.links():
-        if link.ep_a.is_zero() or link.ep_b.is_zero():
-            continue # dummy links
-        if topo.ases[link.ep_a].is_attachment_point or topo.ases[link.ep_b].is_attachment_point:
-            return (ifid, link)
-    return (None, None)
+
+def _get_ap_links(topo, user_as: AS) -> List[AttachmentLink]:
+    """Get all links connecting a user AS to attachment points."""
+    links = []
+
+    for user_ifid, link in user_as.links():
+        if link.is_dummy():
+            continue
+        elif topo.ases[link.ep_a].is_attachment_point:
+            ap, user = link.ep_a, link.ep_b
+            ap_underlay_addr, user_underlay_addr = link.ep_a_underlay, link.ep_b_underlay
+        elif topo.ases[link.ep_b].is_attachment_point:
+            ap, user = link.ep_b, link.ep_a
+            ap_underlay_addr, user_underlay_addr = link.ep_b_underlay, link.ep_a_underlay
+        else:
+            continue # not an AP link
+        links.append(AttachmentLink(
+            user_ifid,
+            unwrap(user_underlay_addr),
+            link.bridge.get_br_bind_address(user, topo.ases[user], user_ifid),
+            ap,
+            unwrap(ap_underlay_addr),
+            link.bridge.get_br_bind_address(ap, topo.ases[ap], ap.ifid)
+        ))
+
+    return links
 
 
 def _format_underlay_addr(addr: Optional[UnderlayAddress]) -> Tuple[str, str]:

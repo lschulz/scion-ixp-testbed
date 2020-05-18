@@ -1,11 +1,7 @@
 # Tiny standalone topology.
 
 defaults:
-  subnet: "127.0.0.0/8"
   link_subnet: "10.1.10.0/24"
-  zookeepers:
-    1:
-      addr: 127.0.0.1
 networks:
   "ixp_network":
     type: "ovs_bridge"
@@ -13,6 +9,9 @@ networks:
 ASes:
   "1-ff00:0:110":
     core: true
+    voting: true
+    authoritative: true
+    issuing: true
     mtu: 1400
   "1-ff00:0:111":
     cert_issuer: 1-ff00:0:110

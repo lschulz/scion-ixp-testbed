@@ -6,6 +6,4 @@ if [ "$#" -lt "2" ]; then
     exit 1
 fi
 
-./ixp-testbed.py -w $1 exec ${3:-'.*'} \
-"./bin/scmp echo -local {isd_as},[127.0.0.1] \
--remote $2,[127.0.0.1] -c 4"
+./ixp-testbed.py -w $1 exec ${3:-'.*'} "./bin/scmp echo -remote $2,[127.0.0.1] -c 4"

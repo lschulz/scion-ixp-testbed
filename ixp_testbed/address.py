@@ -1,6 +1,8 @@
 import ipaddress
 from typing import NamedTuple, NewType, Union
 
+import lib.scion_addr
+
 
 IpAddress = Union[ipaddress.IPv4Address, ipaddress.IPv6Address]
 IpNetwork = Union[ipaddress.IPv4Network, ipaddress.IPv6Network]
@@ -24,3 +26,33 @@ class UnderlayAddress(NamedTuple):
             return "[{}]:{}".format(self.ip, self.port)
         else:
             assert(False)
+
+
+class ISD_AS(lib.scion_addr.ISD_AS):
+    """Adds some removed methods back to ISD_AS."""
+    AS_BITS = 48
+    MAX_AS = (1 << AS_BITS) - 1
+
+    def __init__(self, initializer=None):
+        if initializer is None:
+            self._isd = 0
+            self._as = 0
+        elif isinstance(initializer, ISD_AS):
+            self._isd = initializer._isd
+            self._as = initializer._as
+        elif isinstance(initializer, int):
+            self._isd = initializer >> self.AS_BITS
+            self._as = initializer & self.MAX_AS
+        else:
+            super().__init__(initializer)
+
+    def __getitem__(self, index):
+        if index == 0:
+            return self._isd
+        elif index == 1:
+            return self._as
+        else:
+            raise IndexError()
+
+    def __int__(self):
+        return self.int()

@@ -15,7 +15,7 @@ networks:
 coordinator:
   network: "coord"
   expose: "8000"
-  expose_on: "192.168.244.4"
+  expose_on: "192.168.244.2"
   users:
     "admin":
       email: "admin@example.com"
@@ -35,9 +35,9 @@ prometheus:
   network: "coord"
   host: "localhost"
 
-  # The prometheus server will be reachable at http://192.168.244.4:8000.
+  # The prometheus server will be reachable at http://192.168.244.2:9090.
   expose: 9090
-  expose_on: "192.168.244.4"
+  expose_on: "192.168.244.2"
 
   scrape_interval: 5s # Interval in which metrics are collected.
 

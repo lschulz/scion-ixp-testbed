@@ -2,10 +2,9 @@ import ipaddress
 import logging
 import unittest
 
-from lib.packet.scion_addr import ISD_AS
 import yaml
 
-from ixp_testbed.address import IfId
+from ixp_testbed.address import IfId, ISD_AS
 from ixp_testbed.gen.generator import extract_topo_info
 from ixp_testbed.network.docker import DockerBridge
 from ixp_testbed.network.ovs_bridge import OvsBridge
@@ -55,7 +54,7 @@ class TestExtractTopoInfo(unittest.TestCase):
 
     def test(self):
         """Test successful parse."""
-        topo_file = yaml.load(TEST_TOPO)
+        topo_file = yaml.safe_load(TEST_TOPO)
         topo = extract_topo_info(topo_file)
         ASES = [ISD_AS("1-ff00:0:110"), ISD_AS("1-ff00:0:111"), ISD_AS("1-ff00:0:112")]
 
@@ -149,7 +148,7 @@ class TestExtractTopoInfo(unittest.TestCase):
 
     def test_ipv6(self):
         """Test detection of IPv6 addresses."""
-        topo_file = yaml.load(TEST_TOPO)
+        topo_file = yaml.safe_load(TEST_TOPO)
         topo_file['networks']['ixp_network']['subnet'] = "fd00:72c2:d7f1:ff01::/64"
 
         topo = extract_topo_info(topo_file)
@@ -158,7 +157,7 @@ class TestExtractTopoInfo(unittest.TestCase):
 
     def test_no_ifid(self):
         """Test `extract_topo_info` with a link missing an interface identifier."""
-        topo_file = yaml.load(TEST_TOPO)
+        topo_file = yaml.safe_load(TEST_TOPO)
         topo_file['links'][0]['a'] = "1-ff00:0:110-test"
 
         extract_topo_info(topo_file)

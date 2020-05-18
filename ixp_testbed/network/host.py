@@ -1,11 +1,9 @@
 import logging
 from typing import Dict, Optional, Tuple, Union
 
-from lib.packet.scion_addr import ISD_AS
-
 from ixp_testbed import errors
 from ixp_testbed import constants as const
-from ixp_testbed.address import IfId, IpAddress, IpNetwork, L4Port, UnderlayAddress
+from ixp_testbed.address import IfId, IpAddress, IpNetwork, ISD_AS, L4Port, UnderlayAddress
 from ixp_testbed.coordinator import Coordinator
 from ixp_testbed.host import Host
 from ixp_testbed.network.bridge import Bridge

@@ -7,7 +7,7 @@ hosts:
   "localhost":
     # Specification of host addresses to be used in 'host' networks.
     addresses: {
-      "core": "192.168.244.4"
+      "core": "192.168.244.2"
     }
 
   "host1":

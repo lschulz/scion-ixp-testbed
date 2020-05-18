@@ -3,12 +3,11 @@ import logging
 from typing import cast
 import unittest
 
-from lib.packet.scion_addr import ISD_AS
 from lib.types import LinkType
 import yaml
 
 from ixp_testbed import errors
-from ixp_testbed.address import IfId, L4Port, UnderlayAddress
+from ixp_testbed.address import IfId, ISD_AS, L4Port, UnderlayAddress
 from ixp_testbed.gen.addr_alloc import assign_underlay_addresses
 from ixp_testbed.gen.generator import extract_topo_info
 from ixp_testbed.host import LocalHost, RemoteHost
@@ -138,7 +137,7 @@ class TestExtractTopoInfo(unittest.TestCase):
 
     def test(self):
         """Test successful parse of a topology with multiple hosts and a coordinator."""
-        topo_file = yaml.load(TEST_TOPO)
+        topo_file = yaml.safe_load(TEST_TOPO)
         topo = extract_topo_info(topo_file)
         assign_underlay_addresses(topo)
 
@@ -339,7 +338,7 @@ class TestExtractTopoInfo(unittest.TestCase):
         """Test `extract_topo_info` with a link between different hosts missing the 'network'
         specification.
         """
-        topo_file = yaml.load(TEST_TOPO)
+        topo_file = yaml.safe_load(TEST_TOPO)
         del topo_file['links'][5]['network']
 
         with self.assertRaises(errors.InvalidTopo):

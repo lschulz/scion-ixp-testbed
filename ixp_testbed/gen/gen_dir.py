@@ -6,12 +6,17 @@ import shutil
 from pathlib import Path
 from typing import Any, Mapping
 
-from lib.packet.scion_addr import ISD_AS
+import toml
 
 import ixp_testbed.constants as const
-from ixp_testbed.address import IfId
+from ixp_testbed.address import IfId, ISD_AS
 from ixp_testbed.scion import AS, BorderRouter, Link
 from ixp_testbed.topology import Topology
+
+
+def _get_as_path(isd_as: ISD_AS) -> Path:
+    """Returns the relative path of an ASes configuration in the gen folder."""
+    return Path("ISD{}/AS{}/".format(isd_as.isd_str(), isd_as.as_file_fmt()))
 
 
 def modify_as_topo_file(gen_path: Path, isd_as: ISD_AS, mod_func):
@@ -22,7 +27,7 @@ def modify_as_topo_file(gen_path: Path, isd_as: ISD_AS, mod_func):
     :param mod_func: The function that that is doing the actual modifications by mutating the
                      dictionary it is given.
     """
-    as_path = gen_path.joinpath("ISD{}/AS{}/".format(isd_as.isd_str(), isd_as.as_file_fmt()))
+    as_path = gen_path.joinpath(_get_as_path(isd_as))
     topo_file_path = as_path.joinpath("endhost/topology.json")
 
     topo_file = None
@@ -134,6 +139,24 @@ def _install_topo_file(topo_file: Mapping[str, Any], as_path: Path):
             if topo_path.exists():
                 with open(topo_path, 'w') as output_file:
                     json.dump(topo_file, output_file, indent=2)
+
+
+def modify_sciond_address(gen_path: Path, topo: Topology):
+    """Set the address SCIOND listens on to 127.0.0.1:30255 in all ASes.
+
+    :param gen_path: Path to the gen folder to modify.
+    :param topo: Topology configuration.
+    """
+    for isd_as in topo.ases.keys():
+        as_path = gen_path.joinpath(_get_as_path(isd_as))
+        sd_config_path = as_path.joinpath("endhost/sd.toml")
+
+        config = toml.load(sd_config_path)
+
+        config['sd']['address'] = "127.0.0.1:30255"
+
+        with open(sd_config_path, 'w') as file:
+            toml.dump(config, file)
 
 
 def create_as_mount_dirs(workdir: Path, topo: Topology):

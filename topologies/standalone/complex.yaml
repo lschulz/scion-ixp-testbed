@@ -1,23 +1,33 @@
 # A more complex standalone topology with two ISDs.
 
 defaults:
-  subnet: "127.0.0.0/8"
   link_subnet: "10.1.10.0/24"
-  zookeepers: {1: {addr: 127.0.0.1}}
 networks:
   "links":
     type: "docker_bridge"
     subnet: "10.1.20.0/24"
 ASes:
-  "1-ff00:0:110": {core: true}                  # A
+  "1-ff00:0:110":                               # A
+    core: true
+    voting: true
+    authoritative: true
+    issuing: true
   "1-ff00:0:120": {cert_issuer: "1-ff00:0:110"} # B
   "1-ff00:0:121": {cert_issuer: "1-ff00:0:110"} # C
   "1-ff00:0:130": {cert_issuer: "1-ff00:0:110"} # D
   "1-ff00:0:131": {cert_issuer: "1-ff00:0:110"} # E
   "1-ff00:0:132": {cert_issuer: "1-ff00:0:110"} # F
   "1-ff00:0:133": {cert_issuer: "1-ff00:0:110"} # G
-  "2-ff00:0:210": {core: true}                  # H
-  "2-ff00:0:211": {core: true}                  # I
+  "2-ff00:0:210":                               # H
+    core: true
+    voting: true
+    authoritative: true
+    issuing: true
+  "2-ff00:0:211":                               # I
+    core: true
+    voting: true
+    authoritative: true
+    issuing: true
   "2-ff00:0:220": {cert_issuer: "2-ff00:0:210"} # J
   "2-ff00:0:230": {cert_issuer: "2-ff00:0:210"} # K
 links:

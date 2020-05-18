@@ -7,7 +7,6 @@ hosts:
   "host1":
     ssh_host: "192.168.244.3"
     username: "lars"
-    identity_file: "/home/lars/.ssh/id_rsa"
 
 networks:
   "coord":

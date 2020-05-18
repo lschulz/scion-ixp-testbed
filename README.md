@@ -219,7 +219,7 @@ Additionally, a list of executables to measure individually can be provided as `
 number of measurements and the measurement interval in seconds are specified by `-c` and `-i`,
 respectively. For example:
 ```bash
-./ixp-testbed.py stats -i 10 -c 1 -p '1-ff00:0:...' --services bin/border bin/beacon_srv bin/path_srv
+./ixp-testbed.py stats -i 10 -c 1 -p '1-ff00:0:...' --services bin/border bin/cs
 ```
 
 ### Monitoring AS metrics

@@ -2,10 +2,8 @@ import ipaddress
 import logging
 import unittest
 
-from lib.packet.scion_addr import ISD_AS
-
 from ixp_testbed import errors
-from ixp_testbed.address import IfId, L4Port
+from ixp_testbed.address import IfId, ISD_AS, L4Port
 from ixp_testbed.coordinator import Coordinator
 from ixp_testbed.host import LocalHost
 from ixp_testbed.network.docker import DockerBridge
@@ -100,7 +98,8 @@ class TestHostNetwork(unittest.TestCase):
         net.set_host_ip(hosts[1], ipaddress.ip_address("10.0.0.11"))
 
         with self.assertRaises(errors.NotAvailable):
-            net.assign_br_address(ISD_AS("1-ff00:0:000"), asys[0], IfId(1), pref_ip="10.0.0.2")
+            net.assign_br_address(ISD_AS("1-ff00:0:000"), asys[0], IfId(1),
+            pref_ip=ipaddress.ip_address("10.0.0.2"))
 
         ip, port = net.assign_br_address(ISD_AS("1-ff00:0:000"), asys[0], IfId(1))
         self.assertEqual(ip, ipaddress.ip_address("10.0.0.10"))

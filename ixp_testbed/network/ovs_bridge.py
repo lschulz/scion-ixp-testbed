@@ -2,10 +2,8 @@ import ipaddress
 import logging
 from typing import Iterator, Union
 
-from lib.packet.scion_addr import ISD_AS
-
 from ixp_testbed import errors
-from ixp_testbed.address import IpAddress, IpNetwork
+from ixp_testbed.address import IpAddress, IpNetwork, ISD_AS
 from ixp_testbed.host import Host
 from ixp_testbed.network.bridge import Bridge
 from ixp_testbed.scion import AS

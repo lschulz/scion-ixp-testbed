@@ -3,10 +3,9 @@ import os
 from pathlib import Path
 from typing import List, Optional, cast
 
-from lib.packet.scion_addr import ISD_AS
 import yaml
 
-from ixp_testbed.address import UnderlayAddress
+from ixp_testbed.address import ISD_AS, UnderlayAddress
 from ixp_testbed.host import Host, RemoteHost
 from ixp_testbed.network.docker import DockerNetwork
 from ixp_testbed.service import ContainerizedService
@@ -17,14 +16,8 @@ log = logging.getLogger(__name__)
 PROMETHEUS_CONFIG_FILE = "prometheus.yml"
 """Name of the Prometheus configuration file."""
 
-BS_PROM_PORT = 32041
-"""Port of the Prometheus metrics endpoint of beacon servers."""
-
-CS_PROM_PORT = 32041
-"""Port of the Prometheus metrics endpoint of certificate servers."""
-
-PS_PROM_PORT = 32043
-"""Port of the Prometheus metrics endpoint of path servers."""
+CS_PROM_PORT = 30454
+"""Port of the Prometheus metrics endpoint of the control service."""
 
 
 class Prometheus(ContainerizedService):
@@ -128,9 +121,7 @@ class Prometheus(ContainerizedService):
                 continue
             static_configs.append({
                 'targets': [
-                    "[%s]:%d" % (ip, BS_PROM_PORT),
-                    "[%s]:%d" % (ip, CS_PROM_PORT),
-                    "[%s]:%d" % (ip, PS_PROM_PORT)
+                    "[%s]:%d" % (ip, CS_PROM_PORT)
                 ],
                 'labels': {'group': target.as_str()}
             })

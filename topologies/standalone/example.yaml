@@ -3,12 +3,6 @@ defaults:
   # network to use.
   link_subnet: "10.1.1.0/24"
 
-  # Used by 'scion.sh topology':
-  subnet: "127.0.0.0/8"
-  zookeepers:
-    1:
-      addr: 127.0.0.1
-
 # Network declarations.
 networks:
   "backbone":
@@ -28,6 +22,9 @@ ASes:
   # ISD 1
   "1-ff00:0:110":
     core: true
+    voting: true
+    authoritative: true
+    issuing: true
   "1-ff00:0:111":
     cert_issuer: 1-ff00:0:110
   "1-ff00:0:112":
@@ -38,6 +35,9 @@ ASes:
   # ISD 2
   "2-ff00:0:210":
     core: true
+    voting: true
+    authoritative: true
+    issuing: true
   "2-ff00:0:211":
     cert_issuer: 2-ff00:0:210
   "2-ff00:0:212":

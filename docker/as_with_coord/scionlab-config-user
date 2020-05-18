@@ -21,8 +21,7 @@ the scionlab.org coordination website and installs it in this machine.
 
 Prerequisites:
     - must be run as root.
-    - an installation of SCION (with all its dependencies) either in the form of packages
-        or in the old form, which will be replaced with the packages form by this script.
+    - an installation of SCION from the scionlab packages
     - openvpn installed, if used
 """
 
@@ -39,7 +38,6 @@ import sys
 import tarfile
 import tempfile
 import urllib.request
-import time
 from collections import namedtuple
 
 
@@ -100,6 +98,8 @@ def parse_command_line_args(argv):
     group_fetch.add_argument('--url', required=True, help='URL of the SCIONLab coordination service')
 
     parser.add_argument('--tar')
+
+    parser.add_argument('--version', action='version', version='%(prog)s 2.0, api/v2, March 2020')
 
     return parser.parse_args(argv[1:])
 
@@ -176,7 +176,7 @@ def fetch_config(config_info):
         - tarfile.tar the configuration archive
     """
 
-    url = '{coordinator_url}/api/host/{host_id}/config'.format(
+    url = '{coordinator_url}/api/v2/host/{host_id}/config'.format(
         coordinator_url=config_info.url.rstrip('/'),
         host_id=config_info.host_id
     )
@@ -187,21 +187,25 @@ def fetch_config(config_info):
     if config_info.version:
         data['version'] = config_info.version
 
+    error_msg = "Failed to fetch configuration from SCIONLab coordinator at %s: %s"
+
     try:
         conn = _http_get(url, data, username=config_info.host_id, password=config_info.host_secret)
-        response_data = conn.read()
+        code = conn.getcode()
+        if code == 200:
+            response_data = conn.read()
+            return tarfile.open(mode='r:gz', fileobj=io.BytesIO(response_data))
+        elif code == 204:
+            return _CONFIG_EMPTY
+        else:
+            _error_exit(error_msg, config_info.url, code)
     except urllib.error.HTTPError as e:
         if e.code == 304:
             return _CONFIG_UNCHANGED
-        elif e.code == 204:
-            return _CONFIG_EMPTY
         else:
-            _error_exit("Failed to fetch configuration from SCIONLab coordinator at %s: %s",
-                        config_info.url, e)
+            _error_exit(error_msg, config_info.url, e)
     except Exception as e:
-        _error_exit("Failed to fetch configuration from SCIONLab coordinator at %s: %s",
-                    config_info.url, e)
-    return tarfile.open(mode='r:gz', fileobj=io.BytesIO(response_data))
+        _error_exit(error_msg, config_info.url, e)
 
 
 def confirm_deployed(args):
@@ -218,7 +222,7 @@ def confirm_deployed(args):
     if args.url:
         config_info = config_info._replace(url=args.url)
 
-    url = '{coordinator_url}/api/host/{host_id}/deployed_config_version'.format(
+    url = '{coordinator_url}/api/v2/host/{host_id}/deployed_config_version'.format(
         coordinator_url=config_info.url.rstrip('/'),
         host_id=config_info.host_id
     )
@@ -285,6 +289,7 @@ def install_scion_config(tmpdir):
 def start_scion():
     subprocess.run(['supervisor/supervisor.sh', 'reload'], cwd=SCION_CONFIG_PATH, check=True)
     subprocess.run(['./gen-certs.sh'], cwd=SCION_CONFIG_PATH, check=True)
+    os.makedirs('gen-cache', exist_ok=True)
     subprocess.run(['./scion.sh', 'run', 'nobuild'], cwd=SCION_CONFIG_PATH, check=True)
 
 

@@ -8,8 +8,8 @@ from typing import Dict, Iterable, List, Set
 import docker
 
 from ixp_testbed.scion import AS
+from ixp_testbed.address import ISD_AS
 from ixp_testbed.topology import Topology
-from lib.packet.scion_addr import ISD_AS
 
 
 def measure_perf_stats(topo: Topology,

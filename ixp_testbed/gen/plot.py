@@ -7,9 +7,9 @@ from typing import Iterable, Tuple
 from lib.types import LinkType
 
 from ixp_testbed import errors
+from ixp_testbed.address import ISD_AS
 from ixp_testbed.scion import AS, Link
 from ixp_testbed.topology import Topology
-from lib.packet.scion_addr import ISD_AS
 
 
 def plot_topology(topo: Topology, out=sys.stdout) -> None:

@@ -4,7 +4,7 @@ USER scion
 RUN sudo apt update
 
 # Install 'ip' and 'ping' commands.
-RUN sudo apt-get install -y iproute2 iputils-ping
+RUN sudo apt-get install -y iproute2 iputils-ping python
 
 # Script for generating TLS certificates.
 COPY --chown=scion:users gen-certs.sh /home/scion/go/src/github.com/scionproto/scion/

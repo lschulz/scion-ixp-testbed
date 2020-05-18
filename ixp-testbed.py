@@ -5,10 +5,9 @@ import os
 import sys
 from pathlib import Path
 
-from lib.packet.scion_addr import ISD_AS
-
 import ixp_testbed.run.commands
 import ixp_testbed.gen.commands
+from ixp_testbed.address import ISD_AS
 from ixp_testbed.constants import DEFAULT_LINK_BW, DEFAULT_LINK_TYPE, DEFAULT_MTU, SCION_USER
 
 
@@ -68,7 +67,7 @@ def create_parser() -> argparse.ArgumentParser:
         help="User to execute the command as. Default: '{}'".format(SCION_USER),
         default=SCION_USER)
     exec_parser.add_argument("-d", action='store_true', dest='detach',
-        help="Detach command from Docker exec. Not output is forwarded.")
+        help="Detach command from Docker exec. No output is forwarded.")
     exec_parser.add_argument("-n", action='store_true', dest='dry_run',
         help="Just print what would be executed.")
     exec_parser.set_defaults(exec_subcommand=ixp_testbed.run.commands.exec)
@@ -80,7 +79,7 @@ def create_parser() -> argparse.ArgumentParser:
         help="Regular expression matched against AS identifiers. Only matching ASes are updated."
              " Default: All ASes.")
     update_parser.add_argument("-d", action='store_true', dest='detach',
-        help="Do not wait for updates to complete. Not output is forwarded.")
+        help="Do not wait for updates to complete. No output is forwarded.")
     update_parser.add_argument("-f", action='store_true', dest='force',
         help="Install the configuration from the coordinator even if the AS appears to be up to date.")
     update_parser.set_defaults(exec_subcommand=ixp_testbed.run.commands.update)

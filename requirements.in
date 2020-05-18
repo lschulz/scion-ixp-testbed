@@ -1,9 +1,8 @@
-# For importing ISD_AS from SCION
-pycapnp
-pygments
-
 # Docker Python SDK
 docker
+
+# For modifying SCION configuration files
+toml
 
 # For generating SSH keys
 cryptography

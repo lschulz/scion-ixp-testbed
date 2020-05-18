@@ -6,10 +6,8 @@ from collections import defaultdict
 import logging
 from typing import DefaultDict, Dict, Iterator, Optional, Tuple
 
-from lib.packet.scion_addr import ISD_AS
-
 from ixp_testbed import errors
-from ixp_testbed.address import IfId, IpAddress, IpNetwork, L4Port, UnderlayAddress
+from ixp_testbed.address import IfId, IpAddress, IpNetwork, ISD_AS, L4Port, UnderlayAddress
 from ixp_testbed.constants import BR_DEFAULT_PORT
 from ixp_testbed.scion import AS, Link
 

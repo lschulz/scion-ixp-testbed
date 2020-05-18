@@ -6,10 +6,9 @@ import sys
 from typing import Any, Callable, Mapping, NamedTuple, Tuple
 
 import docker
-from lib.packet.scion_addr import ISD_AS
 
 from ixp_testbed import errors
-from ixp_testbed.address import IfId
+from ixp_testbed.address import IfId, ISD_AS
 from ixp_testbed.gen.gen_dir import (
     add_br_interface, modify_as_topo_file, modify_br_interface_properties, remove_br_interface)
 from ixp_testbed.network.bridge import connect_bridge, disconnect_bridge
@@ -84,8 +83,8 @@ def add_link(topo: Topology, ixp: Ixp, a: Tuple[ISD_AS, AS], b: Tuple[ISD_AS, AS
     with RollbackManager() as cleanup:
         # assign underlay addresses
         link = Link(
-            LinkEp.Construct(isd_as_a, ifid=ifid_a),
-            LinkEp.Construct(isd_as_b, ifid=ifid_b),
+            LinkEp(isd_as_a, ifid=ifid_a),
+            LinkEp(isd_as_b, ifid=ifid_b),
             link_properties['type'])
         link.bridge = ixp.bridge
         link.ep_a_underlay = ixp.bridge.assign_br_address(isd_as_a, as_a, ifid_a)

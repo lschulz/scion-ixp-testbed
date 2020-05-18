@@ -1,14 +1,13 @@
 # Small topology for illustrating beacon server policies.
 
 defaults:
-  subnet: "127.0.0.0/8"
   link_subnet: "10.1.10.0/24"
-  zookeepers:
-    1:
-      addr: 127.0.0.1
 ASes:
   "1-ff00:0:110": # A
     core: true
+    voting: true
+    authoritative: true
+    issuing: true
   "1-ff00:0:120": # B
     cert_issuer: 1-ff00:0:110
   "1-ff00:0:121": # C
@@ -21,6 +20,9 @@ ASes:
     cert_issuer: 1-ff00:0:110
   "2-ff00:0:210": # G
     core: true
+    voting: true
+    authoritative: true
+    issuing: true
   "2-ff00:0:240": # H
     cert_issuer: 2-ff00:0:210
 links:

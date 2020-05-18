@@ -3,12 +3,10 @@
 import io
 import ipaddress
 import logging
-from typing import Dict, Iterable, List, Optional, Tuple
+import re
+from typing import Dict, Iterable, List, Optional, Tuple, Union
 
-from lib.packet.scion_addr import ISD_AS
-import topology.topo
-
-from ixp_testbed.address import IfId, IpAddress, UnderlayAddress
+from ixp_testbed.address import IfId, IpAddress, ISD_AS, UnderlayAddress
 from ixp_testbed.gen.interfaces import pick_unused_ifid
 from ixp_testbed.host import Host
 from ixp_testbed.util.typing import unwrap
@@ -16,35 +14,46 @@ from ixp_testbed.util.typing import unwrap
 log = logging.getLogger(__name__)
 
 
-class LinkEp(topology.topo.LinkEP):
-    """Extends topology.topo.LinkEP to enable easy construction.
-    """
-    def __init__(self, raw=None):
-        if raw is None:
-            super().__init__("0-0000:0:000")
-        else:
-            super().__init__(raw)
+class LinkEp(ISD_AS):
+    """Similar to topology.topo.LinkEP with some extensions for easier construction."""
+    PATTERN = re.compile(r"(\d+-[^#\-]+)(?:-([^#]*))?(?:#(\d+))?")
 
-    @staticmethod
-    def Construct(
-        isd_as: ISD_AS, *,
-        ifid: Optional['IfId'] = None, br_label: Optional[str] = None) -> 'LinkEp':
-        """Construct a link endpoint from its components.
+    def __init__(self, initializer: Union[None, str, ISD_AS] = None, *,
+        ifid: Optional['IfId'] = None, br_label: Optional[str] = None):
+        """Construct a link endpoint from a string or its individual components.
 
-        :param isd_as: AS of the endpoint.
+        :param initializer: Link endpoint in textual representation, or AS of the endpoint. In the
+                            latter case, IFID and BR label can be specified by in additional
+                            arguments. If this argument is None, the endpoint ISD-AS number is
+                            initialized to all zeros.
         :param ifid: Interface ID of the endpoint.
         :param br_label: Label for the endpoint's border router used during topology construction.
         """
-        if ifid is None and br_label is None:
-            return LinkEp(str(isd_as))
+        self.ifid = self.br_label = None
+        if initializer is None:
+            super().__init__()
+
+        elif isinstance(initializer, ISD_AS):
+            super().__init__(initializer)
+            self.ifid = ifid
+            self.br_label = br_label
+
         else:
-            string = io.StringIO()
-            string.write(str(isd_as))
-            if br_label is not None:
-                string.write("-%s" % br_label)
-            if ifid is not None:
-                string.write("#%d" % ifid)
-            return LinkEp(string.getvalue())
+            match = self.PATTERN.match(initializer)
+            if match is None:
+                pass
+            else:
+                super().__init__(match[1])
+                self.br_label = match[2]
+                if match[3] is not None:
+                    self.ifid = int(match[3])
+
+
+    def br_name(self):
+        if self.br_label is not None:
+            return "%s-%s" % (self.file_fmt(), self.br_label)
+        else:
+            return None
 
 
 class Link:
@@ -70,6 +79,10 @@ class Link:
             self.ep_a, self.ep_a.ifid, self.ep_a_underlay,
             self.ep_b, self.ep_b.ifid, self.ep_b_underlay,
             self.type, self.bridge.name if self.bridge else "None")
+
+    def is_dummy(self):
+        """Checks whether the link is a dummy link, i.e., one of its endpoints is zero."""
+        return self.ep_a.is_zero() or self.ep_b.is_zero()
 
     def get_underlay_addresses(self, link_ep: ISD_AS):
         """Get the underlay addresses associated with the given endpoint.

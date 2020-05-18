@@ -9,9 +9,8 @@ import sys
 from typing import Dict, List, Optional
 
 import docker
-from lib.packet.scion_addr import ISD_AS
 
-from ixp_testbed.address import IpNetwork
+from ixp_testbed.address import IpNetwork, ISD_AS
 import ixp_testbed.constants as const
 from ixp_testbed.coordinator import Coordinator
 from ixp_testbed.host import Host, push_docker_image, scan_hosts

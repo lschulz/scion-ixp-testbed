@@ -1,14 +1,13 @@
 # Example topology illustrating peering links to direct and indirect descendants.
 
 defaults:
-  subnet: "127.0.0.0/8"
   link_subnet: "10.1.10.0/24"
-  zookeepers:
-    1:
-      addr: 127.0.0.1
 ASes:
   "1-ff00:0:A":
     core: true
+    voting: true
+    authoritative: true
+    issuing: true
   "1-ff00:0:B":
     cert_issuer: 1-ff00:0:A
   "1-ff00:0:C":

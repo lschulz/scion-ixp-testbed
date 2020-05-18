@@ -6,5 +6,4 @@ if [ "$#" -lt "2" ]; then
     exit 1
 fi
 
-./ixp-testbed.py -w $1 exec ${3:-'.*'} \
-"./bin/showpaths -sciond /run/shm/sciond/sd{file_fmt}.sock -srcIA {isd_as} -dstIA $2"
+./ixp-testbed.py -w $1 exec ${3:-'.*'} "./bin/showpaths -dstIA $2"
