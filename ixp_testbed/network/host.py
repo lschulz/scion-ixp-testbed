@@ -70,23 +70,9 @@ class HostNetwork(Bridge):
 
 
     # Override assign_ip_address() to always assign the IP address of the AS's host.
-    def assign_ip_address(self,
-        to: Union[Coordinator, Tuple[ISD_AS, AS]], pref_ip: Optional[IpAddress]=None) -> IpAddress:
-
-        host = to.host if isinstance(to, Coordinator) else to[1].host
-
-        try:
-            ip = self._host_mapping[host]
-
-        except KeyError:
-            log.error("No IP address for %s in network %s", host.name, self._name)
-            raise
-
-        else:
-            if pref_ip is not None and pref_ip != ip:
-                raise errors.NotAvailable()
-
-            return super().assign_ip_address(to, ip)
+    def assign_ip_address(self, to: Union[ISD_AS, str],
+        pref_ip: Optional[IpAddress]=None) -> IpAddress:
+        raise NotImplementedError()
 
 
     # Override assign_br_address() to always assign the IP address of the AS's host.

@@ -22,6 +22,23 @@ coordinator:
   expose: "8000"
   expose_on: "192.168.244.2"
 
+  # Restrict which CPUs the coordinator can run on.
+  # cpu_affinity: "0,1"
+
+  # If debug is set to false, the coordinator is run in production mode with a PostgreSQL database
+  # instead of using an SQLite backend. In production mode, the coordinator is run via
+  # docker-compose. Default is true. The path to a suitable compose file must be given in
+  # compose_path.
+  # debug: false
+
+  # Path to a Docker compose file for running the coordinator in production configuration. This path
+  # is on the coordinator's designated Docker host.
+  # compose_path: "/home/lars/scionlab/ixp-testbed/docker-compose.yaml"
+
+  # If ssh_management is set to true, the coordinator can push configuration updates to user ASes.
+  # Requires debug == false to have an effect. Default is false.
+  # ssh_management: true
+
   # Users configured in the coordinator
   users:
     "admin": # administrator (up to 50 user ASes)
@@ -46,7 +63,8 @@ ASes:
   # User ASes have an owner (administrator or normal user)
   "1-ff00:0:112":
     owner: "user1"
-    ixps: ["ixp1", "ixp2"] # IXP membership has to be declared explicitly
+    ixps: ["ixp1", "ixp2"]  # IXP membership has to be declared explicitly.
+    cpu_affinity: "0,1,2-3" # The subset of CPUs an AS is allowed to run on can be restricted.
   "1-ff00:0:113":
     owner: "user1"
     ixps: ["ixp1", "ixp2"]

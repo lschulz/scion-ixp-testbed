@@ -9,6 +9,7 @@ from typing import Dict, Iterable, List, Optional, Tuple, Union
 from ixp_testbed.address import IfId, IpAddress, ISD_AS, UnderlayAddress
 from ixp_testbed.gen.interfaces import pick_unused_ifid
 from ixp_testbed.host import Host
+from ixp_testbed.util.cpu_affinity import CpuSet
 from ixp_testbed.util.typing import unwrap
 
 log = logging.getLogger(__name__)
@@ -140,6 +141,7 @@ class AS:
     """Representation of a SCION AS running in a Docker container.
 
     :ivar host: Host running the AS.
+    :ivar cpu_affinity: The CPUs on `host` the AS is allowed to run on.
     :ivar container_id: ID of the container the AS runs in. `None` if no container exists.
     :ivar is_core: Whether the AS is a core AS.
     :ivar is_attachment_point: Whether the AS is configured as an 'attachment point'. The SCIONLab
@@ -149,8 +151,9 @@ class AS:
                  has an owner, otherwise it is an 'Infrastructure AS'.
     :ivar border_routers: List of border routers in this AS.
     """
-    def __init__(self, host: Host, is_core: bool):
+    def __init__(self, host: Host, is_core: bool, cpu_affinity: CpuSet = CpuSet()):
         self.host: Host = host
+        self.cpu_affinity: CpuSet = cpu_affinity
         self.container_id: Optional[str] = None
         self.is_core = is_core
         self.is_attachment_point = False

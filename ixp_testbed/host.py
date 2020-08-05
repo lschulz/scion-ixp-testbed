@@ -7,20 +7,24 @@ import os
 from pathlib import Path
 import socket
 import subprocess
-from typing import Any, Dict, Iterable, List, NamedTuple, Optional, cast
+from typing import Any, Dict, Iterable, List, Mapping, NamedTuple, Optional, cast
 
 import docker
 import gevent
 from pssh.clients.native import ParallelSSHClient
 import ssh2.exceptions
 from ssh2.knownhost import (
-    LIBSSH2_KNOWNHOST_KEYENC_RAW, LIBSSH2_KNOWNHOST_KEY_SSHDSS,
-    LIBSSH2_KNOWNHOST_KEY_SSHRSA, LIBSSH2_KNOWNHOST_TYPE_PLAIN)
+    LIBSSH2_KNOWNHOST_KEYENC_RAW,
+    LIBSSH2_KNOWNHOST_KEY_SSHDSS,
+    LIBSSH2_KNOWNHOST_KEY_SSHRSA,
+    LIBSSH2_KNOWNHOST_TYPE_PLAIN,
+)
 from ssh2.session import LIBSSH2_HOSTKEY_TYPE_RSA, Session
 
 from ixp_testbed import errors
 from ixp_testbed.address import IpAddress, L4Port, UnderlayAddress
 from ixp_testbed.constants import KNOWN_HOSTS_FILE
+from ixp_testbed.util.typing import unwrap
 
 log = logging.getLogger(__name__)
 
@@ -52,10 +56,13 @@ class Host(ABC):
 
     @abstractmethod
     def run_cmd(self, args: List[str], *,
+        env: Optional[Mapping[str, str]] = None, cwd: Optional[Path] = None,
         check:bool = False, capture_output:bool = False) -> CompletedProcess:
         """Run a command on the host.
 
         :param args: List of the command and its arguments.
+        :param env: Environment variables the command is run with.
+        :param cwd: Directory the command is run in.
         :param check: If true the exit code of the command is checked. If it is not zero, a
                       ProcessError exception is raised.
         :param capture_output: If true, the commands output is captures and returns in the return
@@ -105,24 +112,34 @@ class LocalHost(Host):
         return True
 
     def run_cmd(self, args: List[str], *,
+        env: Optional[Mapping[str, str]] = None,
+        cwd: Optional[Path] = None,
         check:bool = False,
         capture_output:bool = False) -> CompletedProcess:
         """
         :returns: Either the exit code or a pair of exit code and captured output.
         """
         if capture_output:
-            result = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                    encoding='utf-8')
+            result = subprocess.run(args, env=env, cwd=cwd, stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT, encoding='utf-8')
             if check and result.returncode != 0:
                 raise errors.ProcessError(result.returncode, result.stdout)
             else:
                 return CompletedProcess(result.returncode, result.stdout)
         else:
-            result = subprocess.run(args)
+            result = subprocess.run(args, env=env, cwd=cwd)
             if check and result.returncode != 0:
                 raise errors.ProcessError(result.returncode)
             else:
                 return CompletedProcess(result.returncode)
+
+    def getuid(self) -> int:
+        """Get the real user id of the process."""
+        return os.getuid()
+
+    def getgid(self) -> int:
+        """Get the real group id of the process."""
+        return os.getgid()
 
     def close_session(self):
         if self._dc is not None:
@@ -198,13 +215,20 @@ class RemoteHost(Host):
         return config
 
     def run_cmd(self, args: List[str], *,
+        env: Optional[Mapping[str, str]] = None,
+        cwd: Optional[Path] = None,
         check:bool = False,
         capture_output:bool = False) -> CompletedProcess:
 
         channel = self._get_ssh_session().open_session()
         assert channel != 0
         try:
-            cmd = " ".join(args)
+            extra_cmds = []
+            if cwd is not None:
+                extra_cmds.append("cd %s; " % cwd)
+            if env is not None:
+                extra_cmds.extend("export %s=%s; " % (var,value) for var, value in env.items())
+            cmd = "".join(extra_cmds) + " ".join(args)
             log.debug("Running '%s' on '%s'.", cmd, self.name)
             channel.execute(cmd)
             channel.wait_eof()
@@ -225,6 +249,18 @@ class RemoteHost(Host):
             raise errors.ProcessError(exit_code, output)
         else:
             return CompletedProcess(exit_code, output)
+
+
+    def getuid(self) -> int:
+        """Get the user id on the remote host."""
+        res = self.run_cmd(["id", "-u"], check=True, capture_output=True)
+        return int(unwrap(res.output))
+
+
+    def getgid(self) -> int:
+        """Get the group id on the remote host."""
+        res = self.run_cmd(["id", "-g"], check=True, capture_output=True)
+        return int(unwrap(res.output))
 
 
     def mkdir(self, path, mode=0o777):
@@ -285,7 +321,7 @@ class RemoteHost(Host):
 
 
     @staticmethod
-    def _ssh2_check_success(ret):
+    def _ssh2_check_success(ret) -> bool:
         # Interpret LIBSSH2_ERROR_EAGAIN as success.
         return ret == 0 or ret == ssh2.error_codes.LIBSSH2_ERROR_EAGAIN
 

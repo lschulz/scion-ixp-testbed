@@ -32,16 +32,18 @@ def check_subnet_overlap(topo: Topology) -> Topology:
 
 
 def assign_coord_ip_addresses(topo: Topology) -> None:
-    """Assigns IP addresses for communication between coordinator and ASes.
+    """Assigns IP addresses for communication between coordinator, other control services and ASes.
 
     :param topo: Topology with a coordinator. No IP addresses must be assigned yet in the
                  coordinator's network.
     """
     bridge = topo.coordinator.bridge
     host_gen = bridge.valid_ip_iter()
-    bridge.assign_ip_address(topo.coordinator, pref_ip=next(host_gen)) # for the coordinator
-    for isd_as, asys in topo.ases.items():
-        bridge.assign_ip_address((isd_as, asys), pref_ip=next(host_gen))
+    topo.coordinator.reserve_ip_addresses(host_gen)
+    for service in topo.additional_services:
+        service.reserve_ip_addresses(host_gen)
+    for isd_as in topo.ases.keys():
+        bridge.assign_ip_address(isd_as, pref_ip=next(host_gen))
 
 
 def assign_underlay_addresses(topo: Topology) -> None:

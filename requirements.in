@@ -1,6 +1,9 @@
 # Docker Python SDK
 docker
 
+# For topology file parsing
+pyyaml
+
 # For modifying SCION configuration files
 toml
 

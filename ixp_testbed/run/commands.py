@@ -9,9 +9,9 @@ from lib.errors import SCIONParseError
 
 from ixp_testbed.address import ISD_AS
 from ixp_testbed.constants import CONFIG_DATA_FILE
-from ixp_testbed.run.exec import fetch_config, run_in_matching_cntrs
+from ixp_testbed.run.exec import fetch_config, run_in_cntrs
 import ixp_testbed.run.links as links
-from ixp_testbed.run.stats import measure_perf_stats
+from ixp_testbed.run.stats import Measurements, measure_perf_stats
 from ixp_testbed.topology import Topology
 from ixp_testbed.util.log import open_log_file
 
@@ -99,7 +99,7 @@ def exec(args):
     log.debug("Command: exec")
     topo = Topology.load(args.workdir.joinpath(CONFIG_DATA_FILE))
     try:
-        run_in_matching_cntrs(topo, as_pattern=args.as_pattern,
+        run_in_cntrs(topo, as_selector=args.as_pattern,
             cmd_template=args.command, user=args.user,
             detach=args.detach, dry_run=args.dry_run)
     finally:
@@ -115,22 +115,44 @@ def update(args):
         if topo.coordinator is None:
             log.error("Topology has no coordinator.")
         else:
-            fetch_config(topo, as_pattern=args.as_pattern, detach=args.detach, force=args.force)
+            if args.as_list is None:
+                fetch_config(topo, as_selector=args.as_pattern, detach=args.detach,
+                    force=args.force, no_restart=args.no_restart, rate=args.rate)
+            else:
+                as_list = []
+                with open(args.as_list) as file:
+                    for line in file.readlines():
+                        as_list.append(ISD_AS(line))
+                fetch_config(topo, as_selector=as_list, detach=args.detach,
+                    force=args.force, no_restart=args.no_restart, rate=args.rate)
     finally:
         topo.close_host_connections()
 
 
 def stats(args):
     """Measure the average CPU utilization of SCION ASes and services."""
-    # Don't log this command. Does not change state.
-
+    open_log_file(args.workdir)
+    log.debug("Command: stats")
     topo = Topology.load(args.workdir.joinpath(CONFIG_DATA_FILE))
     try:
-        measurements = measure_perf_stats(topo,
+        measurements = Measurements()
+        # Read existing measurements.
+        try:
+            with open(args.output_file) as file:
+                measurements.data = json.load(file)
+        except FileNotFoundError:
+            pass # No existing data to read in.
+
+        # Take new measurements and merge with existing data.
+        measurements.experiment = args.experiment
+        measure_perf_stats(topo, measurements,
             as_pattern=args.as_pattern, services=set(args.services),
             interval=args.interval, count=args.count)
 
-        print(json.dumps(measurements, indent=2))
+        # Write merged data back to disk.
+        with open(args.output_file, 'w') as file:
+            json.dump(measurements.data, file)
+
     finally:
         topo.close_host_connections()
 

@@ -1,24 +1,31 @@
 """Class representing a SCIONLab coordinator and types and functions supporting its configuration.
 """
-
+from abc import ABC, abstractmethod
 import io
 import json
 import logging
 from pathlib import Path
-from typing import Dict, List, NamedTuple, Optional, Tuple
+from typing import Dict, Iterable, Iterator, List, NamedTuple, Optional, Tuple
 
 import docker
 from lib.types import LinkType
 
 from ixp_testbed import constants as const
-from ixp_testbed.address import IfId, ISD_AS, L4Port, UnderlayAddress
+from ixp_testbed.address import ISD_AS, IfId, IpAddress, L4Port, UnderlayAddress
+import ixp_testbed.errors as errors
 from ixp_testbed.host import Host
 from ixp_testbed.network.bridge import Bridge
 from ixp_testbed.scion import AS, Link
+from ixp_testbed.util.cpu_affinity import CpuSet
 from ixp_testbed.util.docker import copy_to_container, run_cmd_in_cntr
 from ixp_testbed.util.typing import unwrap
 
 log = logging.getLogger(__name__)
+
+_PROD_DJANGO_COORD_URL = "http://django:8000"
+"""URL of the Gunicorn webserver in the internal network of the production coordinator.
+In the coordinator's containers, Docker resolves the name 'django' to the right container's IP
+"""
 
 
 class User:
@@ -40,64 +47,122 @@ class ApiCredentials(NamedTuple):
     secret: str
 
 
-class Coordinator:
-    """Contains information on an instance of the SCIONLab coordinator.
+class _CoordBase(ABC):
+    """Base class for coordinator docker container managers."""
+    @abstractmethod
+    def get_django_container(self, docker_client: docker.DockerClient):
+        raise NotImplementedError()
 
-    :ivar host: Host running the coordinator.
-    :ivar bridge: Network for communication with ASes.
-    :ivar exposed_at: Host address to expose the coordinator on.
-    :ivar container_id: ID of the Docker container running the coordinator.
-    :ivar users: Mapping from user name to user data. The user name is only used by this script.
-                 The coordinator identifies users by their email address.
-    :ivar api_credentials: Coordinator API credentials for all ASes.
-    :ivar _initialized: Flag indicating whether the coordinator has been initialized.
-    """
-    def __init__(self, host: Host, bridge: Bridge):
-        self.host = host
-        self.bridge = bridge
-        self.exposed_at: Optional[UnderlayAddress] = None
-        self.container_id: Optional[str] = None
-        self.users: Dict[str, User] = {}
-        self.api_credentials: Dict[ISD_AS, ApiCredentials]
-        self._initialized = False
+    @abstractmethod
+    def get_web_container(self, docker_client: docker.DockerClient):
+        raise NotImplementedError()
 
+    @abstractmethod
+    def get_ssh_container(self, docker_client: docker.DockerClient):
+        raise NotImplementedError()
 
-    def init(self, topo, workdir: Path):
-        """Initialize the coordinators database.
+    def _get_container(self, docker_client: docker.DockerClient, cntr_id: Optional[str]):
+        if cntr_id is None:
+            raise errors.NotFound()
+        else:
+            try:
+                return docker_client.containers.get(cntr_id)
+            except docker.errors.NotFound:
+                raise errors.NotFound()
 
-        Checks it the coordinator needs initialization. If it does, the coordinators's database is
-        populated with the topology definition and the data needed for automatic AS deployment is
-        exchanged.
+    @abstractmethod
+    def print_status(self, host: Host, out) -> None:
+        """Print the status if the coordinator's containers.
+
+        :param host: Host the coordinator is running on.
+        :param out: Text stream to print to.
         """
-        assert topo.coordinator is self
-        if not self._initialized:
-            config_ssh_client(topo, workdir)
-            init_db(topo, workdir)
-            fetch_api_secrets(topo)
-            self._initialized = True
+        raise NotImplementedError()
 
+    @abstractmethod
+    def reserve_ip_addresses(self, bridge: Bridge, ip_gen: Optional[Iterator[IpAddress]] = None):
+        """Reserve IP addresses for the coordinator.
 
-    def get_container(self):
-        """Get the container the coordinator is running in if `self.container_id` is not None.
-
-        :raises docker.errors.NotFound: If Docker could not find the container.
+        :param ip_gen: Optional sequence the IP addresses are taken from.
         """
-        return self.host.docker_client.containers.get(self.container_id)
+        raise NotImplementedError()
 
+    @abstractmethod
+    def get_http_interface(self, bridge: Bridge) -> UnderlayAddress:
+        """Returns the IP address and TCP port of the coordinator's HTTP interface.
 
-    def start(self, cntr_name: str) -> None:
-        """Start the coordinator in its own container.
-
-        :param cntr_name: Name of the coordinator's container.
+        :param bridge: The network in which an IP address has been reserved for the coordinator with
+                       reserve_ip_addresses().
         """
-        dc = self.host.docker_client
+        return NotImplementedError()
+
+    @abstractmethod
+    def wait_for_db_migrations(self, docker_client: docker.DockerClient, timeout: int) -> None:
+        """Block until 'manage.py migrate' has completed.
+
+        :param timeout: Maximum wait time in seconds.
+        :param docker_client: Docker client connected to the coordinator's host.
+        """
+        return NotImplementedError()
+
+
+class _DebugCoord(_CoordBase):
+    """Manages the debug coordinator's container."""
+    _COORD_DEBUG_SERVER = "coordinator"
+    IDENTITY_FILE_PATH = "/scionlab/run/coord_id_rsa"
+    """Path to the private key for authentication at managed ASes."""
+
+    def __init__(self, coord_name: str):
+        """
+        :param coord_name: Name of the coordinator's container.
+        """
+        self._cntr_id: Optional[str] = None
+        self._cntr_name = coord_name
+
+    def get_django_container(self, docker_client: docker.DockerClient):
+        return self._get_container(docker_client, self._cntr_id)
+
+    def get_web_container(self, docker_client: docker.DockerClient):
+        return self._get_container(docker_client, self._cntr_id)
+
+    def get_ssh_container(self, docker_client: docker.DockerClient):
+        return self._get_container(docker_client, self._cntr_id)
+
+    def print_status(self, host: Host, out) -> None:
+        status = "no container"
+        if self._cntr_id:
+            dc = host.docker_client
+            try:
+                cntr = dc.containers.get(self._cntr_id)
+                status = cntr.status
+            except docker.errors.NotFound:
+                log.warning("Container container (%s) not found.", self._cntr_id)
+        out.write("### Coordinator: {} ({})\n".format(status, self._cntr_name))
+
+    def reserve_ip_addresses(self, bridge: Bridge, ip_gen: Optional[Iterator[IpAddress]] = None):
+        bridge.assign_ip_address(self._COORD_DEBUG_SERVER,
+            next(ip_gen) if ip_gen is not None else None)
+
+    def get_http_interface(self, bridge: Bridge) -> UnderlayAddress:
+        return UnderlayAddress(
+            unwrap(bridge.get_ip_address(self._COORD_DEBUG_SERVER)),
+            L4Port(const.COORD_PORT))
+
+    def wait_for_db_migrations(self, docker_client: docker.DockerClient, timeout: int):
+        # 'manage.py migrate' is executed during image creation
+        return
+
+    def start(self, *,
+        host: Host, bridge: Bridge, internal_url: str,
+        publish_at: Optional[UnderlayAddress], cpu_affinity: CpuSet, **args) -> None:
+        dc = host.docker_client
 
         # Check wheather the coordinator is already running
-        if self.container_id:
+        if self._cntr_id:
             try:
-                cntr = dc.containers.get(self.container_id)
+                cntr = dc.containers.get(self._cntr_id)
             except docker.errors.NotFound:
-                self.container_id = None
+                self._cntr_id = None
             else:
                 if cntr.status == 'running':
                     return # coordinator is already running
@@ -108,36 +173,283 @@ class Coordinator:
 
         # Expose coordinator on host interface
         ports = {}
-        if self.exposed_at is not None:
-            external_ip, external_port = self.exposed_at
+        if publish_at is not None:
+            external_ip, external_port = publish_at
             ports['%d/tcp' % const.COORD_PORT] = (str(external_ip), int(external_port))
-            log.info("Exposing coordinator at http://%s", self.exposed_at.format_url())
+            log.info("Exposing coordinator at http://%s", publish_at.format_url())
 
         # Create and run the container
+        kwargs = {}
+        if not cpu_affinity.is_unrestricted():
+            kwargs['cpuset_cpus'] = str(cpu_affinity)
         cntr = dc.containers.run(const.COORD_IMG_NAME,
-            name=cntr_name,
+            name=self._cntr_name,
             ports=ports,
-            environment={"SCIONLAB_SITE": self.get_url()},
-            detach=True)
-        self.container_id = cntr.id
-        log.info("Started coordinator %s [%s] (%s).", cntr_name, self.host.name, self.container_id)
-        self.bridge.connect_coordinator(self)
+            environment={"SCIONLAB_SITE": internal_url},
+            detach=True,
+            **kwargs)
+        self._cntr_id = cntr.id
+        log.info("Started coordinator %s [%s] (%s).", self._cntr_name, host.name, self._cntr_id)
+        ip = unwrap(bridge.get_ip_address(self._COORD_DEBUG_SERVER))
+        bridge.connect_container(cntr, ip, host)
 
+    def stop(self, host: Host):
+        """Stop and remove the coordinator's container."""
+        if self._cntr_id is not None:
+            dc = host.docker_client
+            try:
+                cntr = dc.containers.get(self._cntr_id)
+            except docker.errors.NotFound:
+                self._cntr_id = None
+            else:
+                cntr.remove(force=True)
+                log.info("Stopped coordinator %s [%s] (%s).", cntr.name, host.name, self._cntr_id)
+                self._cntr_id = None
+
+
+class _ProductionCoord(_CoordBase):
+    """Manages the production coordinator's containers through docker-compose."""
+    _COORD_CADDY = "coordinator_caddy"
+    _COORD_HUEY = "coordinator_huey"
+    IDENTITY_FILE_PATH = "/scionlab/run/coord_id_rsa"
+    """Path to the private key for authentication at managed ASes."""
+
+    def __init__(self, coord_name: str, compose_path: Path):
+        """
+        :param coord_name: Project name passed to docker-compose. Used as prefix for image,
+                           container, network, and volume names.
+        :param compose_path: Path to the coordinator's docker-compose file.
+        """
+        self._project_name = coord_name
+        self._compose_path = compose_path
+        self._django_cntr_id: Optional[str] = None
+        self._caddy_cntr_id: Optional[str] = None
+        self._huey_cntr_id: Optional[str] = None
+
+    def _compose_cmd(self, subcommand: Iterable[str]) -> List[str]:
+        """"Build a docker-compose command line."""
+        cmd = ["docker-compose", "-f", str(self._compose_path), "-p", self._project_name]
+        cmd.extend(subcommand)
+        return cmd
+
+    def get_django_container(self, docker_client: docker.DockerClient):
+        return self._get_container(docker_client, self._django_cntr_id)
+
+    def get_web_container(self, docker_client: docker.DockerClient):
+        return self._get_container(docker_client, self._caddy_cntr_id)
+
+    def get_ssh_container(self, docker_client: docker.DockerClient):
+        return self._get_container(docker_client, self._huey_cntr_id)
+
+    def print_status(self, host: Host, out) -> None:
+        result = host.run_cmd(self._compose_cmd(["ps"]), capture_output=True)
+        out.write("### Coordinator:\n")
+        out.write(result.output)
+
+    def reserve_ip_addresses(self, bridge: Bridge, ip_gen: Optional[Iterator[IpAddress]] = None):
+        bridge.assign_ip_address(self._COORD_CADDY, next(ip_gen) if ip_gen is not None else None)
+        bridge.assign_ip_address(self._COORD_HUEY, next(ip_gen) if ip_gen is not None else None)
+
+    def get_http_interface(self, bridge: Bridge) -> UnderlayAddress:
+        return UnderlayAddress(
+            unwrap(bridge.get_ip_address(self._COORD_CADDY)),
+            L4Port(const.COORD_PORT))
+
+    def wait_for_db_migrations(self, docker_client: docker.DockerClient, timeout: int) -> None:
+        cmd = "appdeps.py --wait-secs {} --file-wait db_initialized".format(timeout)
+        run_cmd_in_cntr(
+            self.get_django_container(docker_client), const.SCIONLAB_USER_PRODUCTION, cmd)
+
+    def start(self, *,
+        host: Host, bridge: Bridge, internal_url: str,
+        publish_at: Optional[UnderlayAddress], cpu_affinity: CpuSet, **args) -> None:
+        dc = host.docker_client
+
+        # Check wheather the coordinator is already running
+        restart_existing = False
+        if self._django_cntr_id:
+            result = host.run_cmd(self._compose_cmd(["ps"]), check=True, capture_output=True)
+            lines = result.output.splitlines()
+            if len(lines) < 3:
+                # coordinator is down
+                restart_existing = False
+            else:
+                for line in lines:
+                    if line.startswith(self._project_name) and not "Up" in line:
+                        # some containers are not running
+                        restart_existing = True
+                        break
+                else:
+                    return # coordinator is already running
+
+        # Invoke docker-compose
+        if restart_existing:
+            result = host.run_cmd(self._compose_cmd(["restart"]), check=True, capture_output=True)
+            log.info("Restarting coordinator containers:\n" + result.output)
+
+        else:
+            env = {
+                "SCIONLAB_SITE": internal_url,
+                "COORD_CPUSET": str(cpu_affinity),
+                "COORD_ADDR": str(publish_at) if publish_at is not None else ""
+            }
+            if publish_at is not None:
+                log.info("Exposing coordinator at http://%s", publish_at.format_url())
+
+            result = host.run_cmd(self._compose_cmd(["up", "--detach"]), env=env, check=True,
+                capture_output=True)
+            log.info("Starting coordinator:\n%s", result.output)
+
+        # Get the django and the caddy container
+        django_cntr = dc.containers.get(self._project_name + "_django_1")
+        self._django_cntr_id= django_cntr.id
+        caddy_cntr = dc.containers.get(self._project_name + "_caddy_1")
+        self._caddy_cntr_id = caddy_cntr.id
+        huey_cntr = dc.containers.get(self._project_name + "_huey_1")
+        self._huey_cntr_id = huey_cntr.id
+
+        # Connect caddy to the coordinator network to publish the web interface
+        bridge.connect_container(caddy_cntr, unwrap(bridge.get_ip_address(self._COORD_CADDY)), host)
+        # Connect huey to the coordinator network to enable AS configuration over SSH
+        bridge.connect_container(huey_cntr, unwrap(bridge.get_ip_address(self._COORD_HUEY)), host)
+
+    def stop(self, host):
+        """Stop and remove the coordinator's containers, internal network, and volumes."""
+        result = host.run_cmd(self._compose_cmd(["down", "-v"]), check=True, capture_output=True)
+        log.info("Stopping coordinator:\n%s", result.output)
+        self._django_cntr_id = None
+        self._caddy_cntr_id = None
+        self._huey_cntr_id = None
+
+
+class Coordinator:
+    """Contains information on an instance of the SCIONLab coordinator.
+
+    :ivar host: Host running the coordinator.
+    :ivar cpu_affinity: The CPUs on `host` the coordinator is allowed to run on.
+    :ivar bridge: Network for communication with ASes.
+    :ivar exposed_at: Host address to expose the coordinator on.
+    :ivar container_id: ID of the Docker container running the coordinator.
+    :ivar users: Mapping from user name to user data. The user name is only used by this script.
+                 The coordinator identifies users by their email address.
+    :ivar api_credentials: Coordinator API credentials for all ASes.
+    :ivar ssh_management: Controls whether the coordinator has SSH access to all ASes, instead of
+                          just attachment points.
+    :ivar _containers: Container(s) hosting the coordinator and its support services.
+    :ivar _initialized: Flag indicating whether the coordinator has been initialized.
+    """
+    def __init__(self, coord_name: str, host: Host, bridge: Bridge, cpu_affinity: CpuSet = CpuSet(),
+        ssh_management: bool = False, debug: bool = True, compose_path: Optional[Path] = None):
+        """
+        :param coord_name: Name of the coordinator instance. Used as a name prefix for images,
+                           containers, networks, and volumes created for the coordinator.
+        :param host: Host running the coordinator.
+        :param cpu_affinity: The CPUs on `host` the coordinator is allowed to run on.
+        :param ssh_management: Controls whether the coordinator has SSH access to all ASes, instead
+                               of just attachment points. Automatic deployment of AS configurations
+                               is only available for APs and currently only works if `debug=false`.
+        :param debug: Whether to run the coordinator in debug mode. If the coordinator is run in
+                      debug mode, it uses an SQLite database and runs in a single container.
+                      If debug mode is disabled, multiple container are started by invoking
+                      docker-compose on `host`. In this mode a PosgreSQL DB stores the coordinator's
+                      data. Running docker-compose requires the coordinator's source to be present
+                      on `host`. Use `compose_path` to specify the location of the directory
+                      containing the compose file on `host`.
+        :param compose_path: Path to the coordinator's docker-compose file on `host`. Only necessary
+                             when `debug` is false.
+        """
+        self.host = host
+        self.cpu_affinity = cpu_affinity
+        self.bridge = bridge
+        self.exposed_at: Optional[UnderlayAddress] = None
+        self.users: Dict[str, User] = {}
+        self.api_credentials: Dict[ISD_AS, ApiCredentials]
+        self.ssh_management = ssh_management
+        if debug:
+            self._containers = _DebugCoord(coord_name)
+        else:
+            self._containers =_ProductionCoord(coord_name, unwrap(compose_path))
+        self._initialized = False
+
+    @property
+    def debug(self):
+        """True, if the coordinator is running in debug mode."""
+        return isinstance(self._containers, _DebugCoord)
+
+    def init(self, topo, workdir: Path):
+        """Initialize the coordinators database.
+
+        Checks it the coordinator needs initialization. If it does, the coordinators's database is
+        populated with the topology definition and the data needed for automatic AS deployment is
+        exchanged.
+        """
+        assert topo.coordinator is self
+        if not self._initialized:
+            if self.ssh_management:
+                config_ssh_client(topo, workdir, self.debug)
+            self._containers.wait_for_db_migrations(self.host.docker_client,
+                const.COORD_DB_MIGRATION_TIMEOUT)
+            init_db(topo, workdir, self.debug)
+            fetch_api_secrets(topo, self.debug)
+            self._initialized = True
+
+    def get_identity_file_path(self) -> str:
+        """"Returns the path the coordinator's private key within its container."""
+        return self._containers.IDENTITY_FILE_PATH
+
+    def get_django_container(self):
+        """Get the container the coordinator web app is running in.
+
+        :raises errors.NotFound The container could not be retrieved, because the coordinator is not
+        running or the container has exited unexpectedly.
+        """
+        return self._containers.get_django_container(self.host.docker_client)
+
+    def get_web_container(self):
+        """Get the container the public web server is running in.
+
+        :raises errors.NotFound The container could not be retrieved, because the coordinator is not
+        running or the container has exited unexpectedly.
+        """
+        return self._containers.get_web_container(self.host.docker_client)
+
+    def get_ssh_container(self):
+        """Get the container providing AS configuration over SSH.
+
+        :raises errors.NotFound The container could not be retrieved, because the coordinator is not
+        running or the container has exited unexpectedly.
+        """
+        return self._containers.get_ssh_container(self.host.docker_client)
+
+    def get_br_prom_ports(self, isd_as: ISD_AS) -> List[L4Port]:
+        """Get the Prometheus endpoint ports of all border routers in the given AS."""
+        ports = io.StringIO()
+        cntr = self.get_django_container()
+        user = const.SCIONLAB_USER_DEBUG if self.debug else const.SCIONLAB_USER_PRODUCTION
+        cmd = "./manage.py runscript print_prom_ports --script-args %s" % isd_as.as_str()
+        run_cmd_in_cntr(cntr, user, cmd, output=ports, check=True)
+        return [L4Port(int(port)) for port in ports.getvalue().split()]
+
+    def print_status(self, out) -> None:
+        """Print the status of the coordinator's containers to `out`."""
+        self._containers.print_status(self.host, out)
+
+    def reserve_ip_addresses(self, ip_gen: Optional[Iterator[IpAddress]] = None):
+        """Reserve IP addresses for the coordinator's containers.
+
+        :param ip_gen: Optional sequence the IP addresses to reserve are taken from.
+        """
+        self._containers.reserve_ip_addresses(self.bridge, ip_gen)
+
+    def start(self) -> None:
+        """Start the coordinator's container(s)."""
+        self._containers.start(host=self.host, bridge=self.bridge, internal_url=self.get_url(),
+            publish_at=self.exposed_at, cpu_affinity=self.cpu_affinity)
 
     def stop(self):
         """Stop and remove the coordinator's container."""
-        if self.container_id is not None:
-            dc = self.host.docker_client
-            try:
-                cntr = dc.containers.get(self.container_id)
-            except docker.errors.NotFound:
-                self.container_id = None
-            else:
-                cntr.remove(force=True)
-                log.info("Stopped coordinator %s [%s] (%s).", cntr.name, self.host.name, self.container_id)
-                self.container_id = None
-                self._initialized = False
-
+        self._containers.stop(host=self.host)
+        self._initialized = False
 
     def get_peers(self, isd_as: ISD_AS, ixp_id: Optional[int]) -> Optional[Dict]:
         """Get the ASes currently peering with the user AS `isd_as` because of peering policies.
@@ -148,8 +460,10 @@ class Coordinator:
                  is not running.
         """
         try:
-            cntr = self.host.docker_client.containers.get(self.container_id)
-        except docker.errors.NotFound:
+            # Production configuration: Caddy container does not have curl, so run directly in the
+            # Django container.
+            cntr = self.get_web_container() if self.debug else self.get_django_container()
+        except errors.NotFound:
             log.error("Coordinator is not running.")
             return None
 
@@ -157,9 +471,11 @@ class Coordinator:
         req_params = ("?ixp=%s" % ixp_id) if ixp_id is not None else ""
         cmd = "curl -X GET {base_url}/api/peering/host/{host}/peers{params}" \
               " -u {host}:{secret}".format(
-                  base_url=self.get_url(), params=req_params, host=uid, secret=secret)
+                  base_url=self.get_url() if self.debug else _PROD_DJANGO_COORD_URL,
+                  params=req_params, host=uid, secret=secret)
+        user = const.SCIONLAB_USER_DEBUG if self.debug else const.SCIONLAB_USER_PRODUCTION
         response = io.StringIO()
-        run_cmd_in_cntr(cntr, const.SCION_USER, cmd, output=response)
+        run_cmd_in_cntr(cntr, user, cmd, output=response)
 
         response.seek(0)
         return json.load(response)
@@ -174,8 +490,10 @@ class Coordinator:
                  is not running.
         """
         try:
-            cntr = self.host.docker_client.containers.get(self.container_id)
-        except docker.errors.NotFound:
+            # Production configuration: Caddy container does not have curl, so run directly in the
+            # Django container.
+            cntr = self.get_web_container() if self.debug else self.get_django_container()
+        except errors.NotFound:
             log.error("Coordinator is not running.")
             return None
 
@@ -183,9 +501,11 @@ class Coordinator:
         req_params = ("?ixp=%s" % ixp_id) if ixp_id is not None else ""
         cmd = "curl -X GET {base_url}/api/peering/host/{host}/policies{params}" \
               " -u {host}:{secret}".format(
-                  base_url=self.get_url(), params=req_params, host=uid, secret=secret)
+                  base_url=self.get_url() if self.debug else _PROD_DJANGO_COORD_URL,
+                  params=req_params, host=uid, secret=secret)
+        user = const.SCIONLAB_USER_DEBUG if self.debug else const.SCIONLAB_USER_PRODUCTION
         response = io.StringIO()
-        run_cmd_in_cntr(cntr, const.SCION_USER, cmd, output=response)
+        run_cmd_in_cntr(cntr, user, cmd, output=response)
 
         response.seek(0)
         return json.load(response)
@@ -198,19 +518,23 @@ class Coordinator:
         :return: String containing the HTTP status code.
         """
         try:
-            cntr = self.host.docker_client.containers.get(self.container_id)
-        except docker.errors.NotFound:
+            # Production configuration: Caddy container does not have curl, so run directly in the
+            # Django container.
+            cntr = self.get_web_container() if self.debug else self.get_django_container()
+        except errors.NotFound:
             log.error("Coordinator is not running.")
             return ""
 
         uid, secret = self.api_credentials[isd_as]
         cmd = "curl -X POST {base_url}/api/peering/host/{host}/policies" \
               " -u {host}:{secret} -d \"{policies}\" -i".format(
-                  base_url=self.get_url(), host=uid, secret=secret,
+                  base_url=self.get_url() if self.debug else _PROD_DJANGO_COORD_URL,
+                  host=uid, secret=secret,
                   policies=policies.replace("'", "\"").replace('"', '\\"'))
 
+        user = const.SCIONLAB_USER_DEBUG if self.debug else const.SCIONLAB_USER_PRODUCTION
         result = io.StringIO()
-        run_cmd_in_cntr(cntr, const.SCION_USER, cmd, output=result)
+        run_cmd_in_cntr(cntr, user, cmd, output=result)
         return result.getvalue().splitlines()[0]
 
 
@@ -221,26 +545,29 @@ class Coordinator:
         :return: String containing the HTTP status code.
         """
         try:
-            cntr = self.host.docker_client.containers.get(self.container_id)
-        except docker.errors.NotFound:
+            # Production configuration: Caddy container does not have curl, so run directly in the
+            # Django container.
+            cntr = self.get_web_container() if self.debug else self.get_django_container()
+        except errors.NotFound:
             log.error("Coordinator is not running.")
             return ""
 
         uid, secret = self.api_credentials[isd_as]
         cmd = "curl -X DELETE {base_url}/api/peering/host/{host}/policies" \
               " -u {host}:{secret} -d \"{policies}\" -i".format(
-                  base_url=self.get_url(), host=uid, secret=secret,
+                  base_url=self.get_url() if self.debug else _PROD_DJANGO_COORD_URL,
+                  host=uid, secret=secret,
                   policies=policies.replace("'", "\"").replace('"', '\\"'))
 
+        user = const.SCIONLAB_USER_DEBUG if self.debug else const.SCIONLAB_USER_PRODUCTION
         result = io.StringIO()
-        run_cmd_in_cntr(cntr, const.SCION_USER, cmd, output=result)
+        run_cmd_in_cntr(cntr, user, cmd, output=result)
         return result.getvalue().splitlines()[0]
 
 
     def get_address(self) -> UnderlayAddress:
-        """Returns the IP address and TCP port of the coordinator."""
-        ip = self.bridge.get_ip_address(self)
-        return UnderlayAddress(unwrap(ip), L4Port(const.COORD_PORT))
+        """Returns the IP address and TCP port of the coordinator's HTTP interface."""
+        return self._containers.get_http_interface(self.bridge)
 
 
     def get_url(self) -> str:
@@ -263,37 +590,48 @@ class Coordinator:
                 )
 
 
-def config_ssh_client(topo, workdir: Path):
+def config_ssh_client(topo, workdir: Path, debug: bool):
     """Copy the SSH private key and client configuration to the coordinator."""
     coord = topo.coordinator
     assert coord
 
     log.info("Copying SSH key to coordinator.")
-    cntr = _get_coord_container(coord)
+    try:
+        cntr = coord.get_ssh_container()
+    except errors.NotFound:
+        log.error("Coordinator is not running.")
+        raise
+
     src_path = workdir.joinpath(const.COORD_KEY_PATH)
-    dst_path = Path(const.SCIONLAB_PATH).joinpath("run")
+    if debug:
+        dst_path = Path(const.SCIONLAB_PATH_DEBUG).joinpath("run")
+        user = const.SCIONLAB_USER_DEBUG
+    else:
+        dst_path = Path(const.SCIONLAB_PATH_PRODUCTION).joinpath("run")
+        user = const.SCIONLAB_USER_PRODUCTION
 
     copy_to_container(cntr, src_path.joinpath(const.COORD_PRIVATE_KEY_FILE), dst_path)
 
-    # Make sure private key is only readable by SCION user
-    run_cmd_in_cntr(cntr, const.SCION_USER,
+    # Make sure private key is only readable by the current user (otherwise ssh does not accept it)
+    run_cmd_in_cntr(cntr, user,
         "chmod 600 %s" % dst_path.joinpath(const.COORD_PRIVATE_KEY_FILE), check=True)
 
     copy_to_container(cntr, src_path.joinpath(const.SSH_CLIENT_CONFIG), dst_path)
 
     # Retrieve host keys
-    run_cmd_in_cntr(cntr, const.SCION_USER, "umask 077 && mkdir -p ~/.ssh", check=True)
+    run_cmd_in_cntr(cntr, user, "umask 077 && mkdir -p ~/.ssh", check=True)
     for isd_as in topo.ases.keys():
-        cmd = "ssh-keyscan -H %s >> ~/.ssh/known_hosts" % topo.coordinator.bridge.get_ip_address(isd_as)
-        run_cmd_in_cntr(cntr, const.SCION_USER, cmd)
+        cmd = "ssh-keyscan -H %s >> ~/.ssh/known_hosts" % (
+            topo.coordinator.bridge.get_ip_address(isd_as))
+        run_cmd_in_cntr(cntr, user, cmd)
 
 
-def init_db(topo, workdir: Path):
+def init_db(topo, workdir: Path, debug):
     """Initialize the coordinator's database with information from `topo`.
 
     :param topo: Topology database.
     :param workdir: Directory containing the topology data.
-    :raises docker.errors.NotFound: The container of the coordinator has not been found.
+    :raises errors.NotFound: The container of the coordinator has not been found.
     """
     coord = topo.coordinator
     assert coord
@@ -305,10 +643,21 @@ def init_db(topo, workdir: Path):
         _create_config_script(topo, file)
 
     # Run configuration script in Django
-    cntr = _get_coord_container(coord)
-    copy_to_container(cntr, output_path, Path(const.SCIONLAB_PATH).joinpath("scripts"))
+    try:
+        cntr = coord.get_django_container()
+    except errors.NotFound:
+        log.error("Coordinator is not running.")
+        raise
+
+    if debug:
+        path = Path(const.SCIONLAB_PATH_DEBUG)
+        user = const.SCIONLAB_USER_DEBUG
+    else:
+        path = Path(const.SCIONLAB_PATH_PRODUCTION)
+        user = const.SCIONLAB_USER_PRODUCTION
+    copy_to_container(cntr, output_path, path.joinpath("scripts"))
     cmd = "./manage.py shell < scripts/" + const.COORD_SCRIPT_NAME
-    run_cmd_in_cntr(cntr, const.SCION_USER, cmd, check=True)
+    run_cmd_in_cntr(cntr, user, cmd, check=True)
 
 
 def _create_config_script(topo, out) -> None:
@@ -351,7 +700,7 @@ def _create_config_script(topo, out) -> None:
                 "isd, as_id='%s', public_ip='%s', bind_ip=%s, is_core=%s)\n" %
                     (isd_as.as_str(), coord.bridge.get_ip_address(isd_as), bind_ip_str, asys.is_core))
             out.write("host = asys.hosts.first()\n")
-            if asys.is_attachment_point:
+            if asys.is_attachment_point or coord.ssh_management:
                 # Attachment points have to support managemnet via SSH
                 out.write("host.managed = True\n")
                 out.write("host.ssh_host = '%s'\n" % coord.bridge.get_ip_address(isd_as))
@@ -410,7 +759,7 @@ def _create_config_script(topo, out) -> None:
             for i, attach in enumerate(attachmentLinks):
                 out.write("link = attachments[%d].link\n" % i)
 
-                # Set the correct IP address and port and the AP side of the link.
+                # Set the correct IP address and port on the AP side of the link.
                 ap_bind_ip, ap_bind_port = _format_underlay_addr(attach.ap_bind_addr)
                 out.write("link.interfaceA.update(public_ip='{public_ip}', public_port={public_port},"
                     " bind_ip={bind_ip}, bind_port={bind_port})\n".format(
@@ -425,11 +774,15 @@ def _create_config_script(topo, out) -> None:
                 out.write("link.interfaceB.save()\n")
 
             # Create the remaining interfaces of the BR connecting to the APs.
-            ap_br = None # BR in the user AS connecting to the AP
+            ap_br = None   # BR in the user AS connecting to the AP
+            got_br = False # Whether the line getting the BR conneting to the APs has been generated
             if len(attachmentLinks) > 0:
                 ap_br = asys.get_border_router(attachmentLinks[0].user_ifid)
                 for ifid, link in ap_br.links.items():
                     if not link.is_dummy() and ifid != attachmentLinks[0].user_ifid:
+                        if not got_br:
+                            out.write("br = BorderRouter.objects.get(AS=asys)\n")
+                            got_br = True
                         _gen_create_interfaces(isd_as, asys, link, ifid, out)
 
             # Create the remaining BRs and their interfaces.
@@ -441,6 +794,12 @@ def _create_config_script(topo, out) -> None:
                         for ifid, link in br.links.items():
                             if not link.is_dummy():
                                 _gen_create_interfaces(isd_as, asys, link, ifid, out)
+
+            if topo.coordinator.ssh_management:
+                out.write("host = Host.objects.get(AS=asys)\n")
+                out.write("host.managed = True\n")
+                out.write("host.ssh_host = '%s'\n" % coord.bridge.get_ip_address(isd_as))
+                out.write("host.save()\n")
 
     # Create links between user ASes
     for link in topo.links:
@@ -576,21 +935,28 @@ def _format_underlay_addr(addr: Optional[UnderlayAddress]) -> Tuple[str, str]:
         return ("None", "None")
 
 
-def fetch_api_secrets(topo):
+def fetch_api_secrets(topo, debug):
     """Retrieve coordinator API credentials for all ASes in the topology."""
     coord = topo.coordinator
     assert coord
 
     log.info("Fetching API secrets from coordinator.")
-    cntr = _get_coord_container(coord)
+    try:
+        cntr = coord.get_django_container()
+    except errors.NotFound:
+        log.error("Coordinator is not running.")
+        raise
+
     secrets = io.StringIO()
-    cmd = "./manage.py shell < scripts/print_api_secrets.py"
-    run_cmd_in_cntr(cntr, const.SCION_USER, cmd, output=secrets, check=True)
+    user = const.SCIONLAB_USER_DEBUG if debug else const.SCIONLAB_USER_PRODUCTION
+    cmd = "./manage.py runscript print_api_secrets"
+    run_cmd_in_cntr(cntr, user, cmd, output=secrets, check=True)
     coord.api_credentials = _parse_api_secrets(secrets.getvalue())
 
 
 def _parse_api_secrets(input: str) -> Dict[ISD_AS, ApiCredentials]:
-    """Parse the output of the 'print_api_secrets.py' script running in context of the coordinator."""
+    """Parse the output of the 'print_api_secrets.py' script running in context of the coordinator.
+    """
     output = {}
 
     for line in input.splitlines():
@@ -598,13 +964,3 @@ def _parse_api_secrets(input: str) -> Dict[ISD_AS, ApiCredentials]:
         output[ISD_AS(isd_as_str)] = ApiCredentials(uid, secret)
 
     return output
-
-
-def _get_coord_container(coord: Coordinator):
-    """Returns the coordinator's container."""
-    dc = coord.host.docker_client
-    try:
-        return dc.containers.get(coord.container_id)
-    except docker.errors.NotFound:
-        log.error("Coordinator is not running.")
-        raise

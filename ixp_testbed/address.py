@@ -16,16 +16,16 @@ class UnderlayAddress(NamedTuple):
     port: L4Port
 
     def __str__(self):
-        return ":".join((str(self.ip), str(self.port)))
-
-    def format_url(self):
-        """Returns a string representation of the address suitable for use in URLs."""
         if isinstance(self.ip, ipaddress.IPv4Address):
             return "{}:{}".format(self.ip, self.port)
         elif isinstance(self.ip, ipaddress.IPv6Address):
             return "[{}]:{}".format(self.ip, self.port)
         else:
             assert(False)
+
+    def format_url(self):
+        """Returns a string representation of the address suitable for use in URLs."""
+        return str(self)
 
 
 class ISD_AS(lib.scion_addr.ISD_AS):

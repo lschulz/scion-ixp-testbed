@@ -18,7 +18,7 @@ from lib.types import LinkType
 from lib.util import load_yaml_file
 
 from ixp_testbed import errors
-from ixp_testbed.address import IfId, IpNetwork, ISD_AS, L4Port, UnderlayAddress
+from ixp_testbed.address import ISD_AS, IfId, IpNetwork, L4Port, UnderlayAddress
 import ixp_testbed.constants as const
 from ixp_testbed.coordinator import Coordinator, User
 from ixp_testbed.errors import InvalidTopo
@@ -34,7 +34,8 @@ from ixp_testbed.prometheus import Prometheus
 from ixp_testbed.scion import AS, BorderRouter, Link, LinkEp
 from ixp_testbed.topology import Ixp, Topology
 from ixp_testbed.util import crypto
-from ixp_testbed.util.docker import copy_to_container, invoke_scion_docker_script, run_cmd_in_cntr
+from ixp_testbed.util.cpu_affinity import CpuSet
+from ixp_testbed.util.docker import copy_to_container, run_cmd_in_cntr, start_scion_cntr
 
 log = logging.getLogger(__name__)
 
@@ -70,22 +71,21 @@ def generate(name: Optional[str], input_file_path: Path, workdir: Path, sc: Path
 
     # Make sure SCION images exists
     try:
-        dc.images.get("scion_base")
-    except docker.errors.ImageNotFound:
-        log.info("SCION base image (scion_base) not found. Building...")
-        invoke_scion_docker_script(sc, "base")
-    try:
         dc.images.get("scion")
     except docker.errors.ImageNotFound:
-        log.info("SCION image (scion) not found. Building...")
-        invoke_scion_docker_script(sc, "build")
+        # Make sure the scion user in the container has the same UID and GID as the user on the
+        # host, so volumes mounted from the host work properly. Since UID and GID are set when the
+        # image is created, mounting volumes on another host requires fixing permissions when
+        # containers are created.
+        build_args = {'SCION_UID': str(os.getuid()), 'SCION_GID': str(os.getgid())}
+        _build_docker_image(const.SCION_BASE_IMG_NAME, "docker/scion_base", dc, build_args)
 
+    _build_docker_image(const.AS_IMG_NAME, "docker/as", dc)
     if topo.coordinator is None:
-        _build_docker_image(const.STANDALONE_TOPO_AS_IMG_NAME, "docker/as_standalone", dc)
         _build_standalone_topology(topo, sc, workdir, dc)
     else:
-        _build_docker_image(const.COORD_TOPO_AS_IMG_NAME, "docker/as_with_coord", dc)
-        _build_docker_image(const.COORD_IMG_NAME, "docker/coordinator", dc)
+        if topo.coordinator.debug:
+            _build_docker_image(const.COORD_IMG_NAME, "docker/coordinator", dc)
         _generate_coord_ssh_keys(topo, workdir)
 
     if topo.coordinator is None:
@@ -167,7 +167,22 @@ def extract_topo_info(topo_file: MutableMapping[str, Any], name: Optional[str] =
         host = topo.hosts[coord_def.get('host', 'localhost')]
         def_name = lambda: topo.get_name_prefix() + const.COORD_NET_NAME
         bridge = networks.get(_get_value(coord_def, 'network', 'coordinator'), def_name, localhost)
-        coord = Coordinator(host, bridge)
+        cpu_affinity = CpuSet(coord_def.get('cpu_affinity'))
+        ssh_management = coord_def.get('ssh_management', False)
+
+        debug = coord_def.get('debug', True)
+        compose_path = None
+        if debug:
+            if ssh_management:
+                log.warning("Coordinator in debug mode, 'ssh_management' has no effect.")
+        else:
+            compose_path = Path(_get_value(coord_def, 'compose_path', 'coordinator'))
+            if 'expose' not in coord_def:
+                log.warning("No interface to publish the coordinator on given. The coordinator will"
+                            " be exposed at http://127.0.0.1:8000.")
+
+        coord = Coordinator(topo.get_coord_name(), host, bridge, cpu_affinity, ssh_management,
+                            debug, compose_path)
         coord.exposed_at = _get_external_address(coord_def)
 
         for name, data in coord_def['users'].items():
@@ -190,7 +205,9 @@ def extract_topo_info(topo_file: MutableMapping[str, Any], name: Optional[str] =
             raise InvalidTopo()
 
         prom = Prometheus(host, cast(DockerNetwork, bridge),
+            cpu_affinity=CpuSet(prom_def.get('cpu_affinity')),
             scrape_interval=prom_def.get('scrape_interval', "30s"),
+            storage_dir=_get_optional_path(prom_def, 'storage_dir'),
             targets=[ISD_AS(target) for target in prom_def['targets']])
         prom.exposed_at = _get_external_address(prom_def)
 
@@ -216,7 +233,8 @@ def extract_topo_info(topo_file: MutableMapping[str, Any], name: Optional[str] =
         except KeyError:
             log.error("Invalid host: '%s'.", as_def[host_name])
             raise
-        asys = AS(host, as_def.get('core', False))
+        cpu_affinity = CpuSet(as_def.get('cpu_affinity'))
+        asys = AS(host, as_def.get('core', False), cpu_affinity)
 
         asys.is_attachment_point = as_def.pop('attachment_point', False)
         asys.owner = as_def.pop('owner', None)
@@ -301,6 +319,14 @@ def _get_ip(dict, key, name):
     except ValueError:
         log.error("Invalid IP address in '%s': '%s'.", name, raw)
         raise
+
+
+def _get_optional_path(dict, key) -> Optional[Path]:
+    raw = dict.get(key)
+    if raw == None:
+        return None
+    else:
+        return Path(raw)
 
 
 def _get_external_address(dict) -> Optional[UnderlayAddress]:
@@ -488,12 +514,14 @@ class IfIdMapping:
         return ifid
 
 
-def _build_docker_image(image_name: str, build_path: str, dc: docker.DockerClient):
+def _build_docker_image(image_name: str, build_path: str, dc: docker.DockerClient,
+    build_args: Mapping[str, str] = {}):
     """Builds a Docker image if it does not exist.
 
     :param image_name: Name of the image to build.
     :param build_path: Path to the directory containing the Dockerfile.
     :param dc: Docker client the image is build with.
+    :param build_args: Build arguments.
     :raises docker.errors.BuildError:
     """
     try:
@@ -503,7 +531,7 @@ def _build_docker_image(image_name: str, build_path: str, dc: docker.DockerClien
         try:
             dc.images.build(
                 path=str(Path(sys.path[0]).joinpath(build_path)),
-                tag=image_name, rm=True)
+                tag=image_name, rm=True, buildargs=build_args)
         except docker.errors.BuildError:
             log.error("Building image '%s' failed.", image_name)
             raise
@@ -513,24 +541,23 @@ def _build_standalone_topology(topo: Topology, sc: Path, workdir: Path, dc: dock
     """Build a standalone SCION topology using the 'scion.sh' script."""
 
     # Start master container
-    master_cntr_name = topo.get_name_prefix() + const.MASTER_CNTR_NAME
     log.info("Starting SCION Docker container.")
-    invoke_scion_docker_script(sc, "start", {
-        'SCION_CNTR': master_cntr_name,
-        'SCION_IMG': const.STANDALONE_TOPO_AS_IMG_NAME,
-        'SCION_MOUNT': workdir.joinpath(const.MASTER_CNTR_MOUNT).resolve() # need absolute path
-    })
+    master_cntr = start_scion_cntr(dc, const.AS_IMG_NAME,
+        cntr_name=topo.get_name_prefix() + const.MASTER_CNTR_NAME,
+        mount_dir=workdir.joinpath(const.MASTER_CNTR_MOUNT).resolve() # need absolute path
+    )
 
-    master_cntr = dc.containers.get(master_cntr_name)
     try:
         # Copy processed topology file into the master container
         processed_topo_file_path = workdir.joinpath(const.PROCESSED_TOPO_FILE)
         copy_to_container(master_cntr, processed_topo_file_path, const.SCION_TOPO_FILES_PATH)
 
         # Build a standalone topology in the master container
+        # SCION v2020.03: scion.sh fails because docker-compose is not found. docker-compose is used
+        # to start jaeger, which we do not need at this point. Disable error checking for now.
         log.info("Building standalone topology...")
-        command = "./scion.sh topology -c topology/topology.topo"
-        run_cmd_in_cntr(master_cntr, const.SCION_USER, command, check=True)
+        command = "./scion.sh topology --in-docker -c topology/topology.topo"
+        run_cmd_in_cntr(master_cntr, const.SCION_USER, command, check=False)
     except:
         raise
     finally:
@@ -554,10 +581,11 @@ def _generate_coord_ssh_keys(topo: Topology, workdir: Path):
         file.write(public)
 
     with open(output_path.joinpath(const.SSH_CLIENT_CONFIG), 'w') as config:
+        identity_file_path = topo.coordinator.get_identity_file_path()
         for isd_as in topo.ases.keys():
             config.write("Host %s\n" % topo.coordinator.bridge.get_ip_address(isd_as))
             config.write("    User %s\n" % const.SCION_USER)
-            config.write("    IdentityFile ~/scionlab/run/coord_id_rsa\n")
+            config.write("    IdentityFile %s\n" % identity_file_path)
             # Supported since OpenSSH 7.6:
             # automatically accept host keys on first connection
             # config.write("    StrictHostKeyChecking accept-new\n")

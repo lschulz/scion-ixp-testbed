@@ -4,9 +4,10 @@ import io
 import logging
 import os
 from pathlib import Path
-import subprocess
 import tarfile
-from typing import Any, Dict, Iterable, Tuple, Union
+from typing import Any, Dict, Iterable, Mapping, Optional, Tuple, Union
+
+import docker
 
 from ixp_testbed import errors
 
@@ -23,23 +24,41 @@ def format_published_ports(ports: Dict[str, Tuple[str, str]]) -> str:
     return " ".join(args)
 
 
-def invoke_scion_docker_script(sc: Path, subcommand: str, env_arg: Dict[str, Any] = {}) -> None:
-    """Invoke the "docker.sh" script found in the SCION root directory.
+def start_scion_cntr(dc: docker.DockerClient, image: str, *,
+    cntr_name: str,
+    mount_dir: Optional[Path] = None,
+    ports: Mapping[str, Tuple[str, str]] = {},
+    additional_args: Mapping[str, Any] = {}):
+    """Create and run a dockerized SCION AS.
 
-    :param sc: Path to the root of the SCION source tree.
-    :param subcommand: The subcommand of docker.sh to execute.
-    :param env_arg: Additional environment variables to set up for docker.sh.
-    :raises CommandFailed: docker.sh return a non-zero value.
+    :param dc: Docker client.
+    :param image: Docker image the container is created from.
+    :param cntr_name: Name of the new container.
+    :param mount_dir: Directory in which the the gen folder and logs of the AS are stored.
+                      If `None`, no host directories are mounted in the container.
+    :param ports: Published ports as expected by `dc.containers.run`.
+    :param additional_args: Additional arguments passed to `dc.containers.run`.
+    :return: Docker container.
     """
-    env = dict(os.environ, **env_arg)
-    result = subprocess.run(["./docker.sh", subcommand], cwd=sc, env=env,
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, encoding='utf-8')
+    volumes = {}
+    if mount_dir is not None:
+        for dir in ["gen", "logs", "gen-cache", "gen-certs"]:
+            host_dir = mount_dir.joinpath(dir)
+            os.makedirs(host_dir, exist_ok=True)
+            volumes[str(host_dir)] = {
+                'bind': "/home/scion/go/src/github.com/scionproto/scion/" + dir,
+                'mode': 'rw'
+            }
 
-    level = logging.DEBUG if result.returncode == 0 else logging.ERROR
-    log.log(level, "Ran './docker.sh %s':\n%s", subcommand, result.stdout)
-
-    if result.returncode != 0:
-        raise errors.CommandFailed("./docker.sh failed.")
+    return dc.containers.run(
+        image,
+        name=cntr_name,
+        tty=True,
+        detach=True,
+        ports=ports,
+        volumes=volumes,
+        **additional_args
+    )
 
 
 def copy_to_container(container, host_path: Path, cntr_path: Union[str, Path]) -> None:

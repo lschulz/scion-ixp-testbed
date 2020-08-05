@@ -1,6 +1,4 @@
 """Constants used by other modules."""
-import os
-
 from lib.defines import DEFAULT_MTU as _DEFAULT_MTU
 
 from topology.topo import DEFAULT_LINK_BW as _DEFAULT_LINK_BW
@@ -74,12 +72,11 @@ SCION_TOPO_FILES_PATH = SCION_PATH + "topology/"
 # Master container and image #
 ##############################
 
-STANDALONE_TOPO_AS_IMG_NAME = "ixp_testbed_standlone_as"
-"""Name of the Docker image for standalone ASes (not getting their configuration from the
-coordinator)."""
+SCION_BASE_IMG_NAME = "scion"
+"""Docker image containing the SCION source code and all dependencies."""
 
-COORD_TOPO_AS_IMG_NAME = "ixp_testbed_as"
-"""Name of the Docker image for ASes fetching their configuration from the coordinator."""
+AS_IMG_NAME = "ixp_testbed_as"
+"""Docker image for AS containers."""
 
 MASTER_CNTR_NAME = "master"
 """Name of the master container in which standalone topologies without a coordinator are build."""
@@ -93,10 +90,19 @@ MASTER_CNTR_MOUNT = "master"
 ########################
 
 COORD_IMG_NAME = "scionlab_coord"
-"""Name of the Docker image containing the coordinator."""
+"""Name of the Docker image containing the debug coordinator."""
 
-SCIONLAB_PATH = "/home/%s/scionlab" % SCION_USER
-"""Path to the scionlab repository in the coordinator container."""
+SCIONLAB_USER_DEBUG = "root"
+"""User name in the debug coordinator container."""
+
+SCIONLAB_USER_PRODUCTION = "root"
+"""User name in the Django container of the production coordinator."""
+
+SCIONLAB_PATH_DEBUG = "/scionlab"
+"""Path to the scionlab repository in the debug coordinator container."""
+
+SCIONLAB_PATH_PRODUCTION = "/scionlab"
+"""Path to the scionlab app in the Django container of the production coordinator."""
 
 COORD_NET_NAME = "coord"
 """Base name of the default Docker bridge connecting to the coordinator to ASes."""
@@ -112,6 +118,10 @@ COORD_PRIVATE_KEY_FILE = "coord_id_rsa"
 
 COORD_PUBLIC_KEY_FILE = "coord_id_rsa.pub"
 """Name of the coordinator's public SSH key file."""
+
+COORD_DB_MIGRATION_TIMEOUT = 60
+"""Maximum time to wait for Django DB migrations to complete when starting the production
+coordinator. In seconds."""
 
 ###############
 # SCION Links #

@@ -5,12 +5,13 @@ Software framework for development and testing of SCION in context of Internet E
 [SCIONLab Coordinator](https://github.com/netsec-ethz/scionlab) in Docker containers.
 
 
-Installation (Ubuntu 18.04)
+Installation (Ubuntu 20.04)
 ---------------------------
 Install Docker, pip, and Open vSwitch (OVS is optional):
 ```bash
-sudo apt-get install -y docker.io python3-pip openvswitch-switch
+sudo apt-get install -y docker.io docker-compose python3-pip cmake libssl-dev openvswitch-switch
 ```
+Note: cmake and libssl-dev are required to build ssh2-python.
 
 Add the current user to the docker group:
 ```bash
@@ -22,15 +23,6 @@ Clone the repository and install Python dependencies:
 git clone https://github.com/lschulz/scion-ixp-testbed.git
 cd ixp-testbed
 pip3 install -r requirements.txt
-```
-
-Clone SCION and configure the environment:
-```bash
-echo 'export SC="$HOME/go/src/github.com/scionproto/scion"' >> ~/.profile
-echo 'export PYTHONPATH=$SC/python:$PYTHONPATH' >> ~/.profile
-source ~/.profile
-mkdir -p $SC
-git clone https://github.com/netsec-ethz/scion $SC/.
 ```
 
 
@@ -135,10 +127,24 @@ To stop and remove the Docker containers and network bridges, run
 You can stop and clean up the topology manually with the following commands:
 ```bash
 docker rm -f $(docker ps -a -q) # Removes *all* Docker containers.
-docker network prune            # Removes all Docker networks.
+docker network prune            # Removes unused networks.
+docker volume prune             # Removes unused volumes.
 sudo ovs-vsctl show             # Prints all OVS bridges.
 sudo ovs-vsctl del-br <br-name> # For each bridge the topology created.
 ```
+
+### Running the SCIONLab coordinator
+The coordinator can either run in 'debug' or 'production' configuration. The 'debug' configuration
+uses SQLite as database, the 'production' configuration uses PostgreSQL.
+See the comments in [topologies/coordinator/example.yaml](/topologies/coordinator/example.yaml) for
+an explanation of how to select the configuration. Running the coordinator in production mode
+requires docker-compose and the coordinator's source tree with a suitable compose file on the
+coordinator's Docker host, i.e., run
+```bash
+git clone --branch ixp-testbed https://github.com/lschulz/scionlab.git
+```
+on the host which will run the coordinator and set `compose_path` to the absolute path of
+`scionlab/ixp-testbed/docker-compose.yaml`.
 
 ### Authentication at remote hosts
 To run a topology spanning multiple host computers, the script needs SSH access to them. Only public

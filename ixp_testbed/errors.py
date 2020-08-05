@@ -18,6 +18,9 @@ class SubnetOverlap(IxpTestbedError):
 class NotAvailable(IxpTestbedError):
     """Some resource is not availabile at the moment."""
 
+class NotFound(IxpTestbedError):
+    """"Requested resource not found."""
+
 class OutOfResources(IxpTestbedError):
     """Some resource has been exhausted."""
 
@@ -33,3 +36,9 @@ class ProcessError(IxpTestbedError):
     def __init__(self, exit_code, output = None):
         self.exit_code: int = exit_code
         self.output: Optional[str] = output
+
+    def __repr__(self):
+        if self.output is not None and len(self.output) > 0:
+            return "ProcessError (%s):\n%s" % (self.exit_code, self.output)
+        else:
+            return "ProcessError (%s)" % self.exit_code

@@ -58,6 +58,7 @@ networks:
 coordinator:
   network: "overlay_bridge1"
   host: "localhost"
+  cpu_affinity: "0"
   expose: "8000"
   expose_on: "192.168.244.2"
   users:
@@ -74,6 +75,7 @@ coordinator:
 prometheus:
   network: "overlay_bridge1"
   host: "localhost"
+  cpu_affinity: "1"
   expose: 9090
   expose_on: "192.168.244.2"
   scrape_interval: 5s
@@ -92,10 +94,12 @@ ASes:
     cert_issuer: 1-ff00:0:110
     owner: "user1"
     ixps: ["ixp1", "ixp2"]
+    cpu_affinity: "0,1,2-3"
   "1-ff00:0:113":
     cert_issuer: 1-ff00:0:110
     owner: "user1"
     ixps: ["ixp1", "ixp2"]
+    cpu_affinity: "4-0,2-3,5"
   "2-ff00:0:210":
     core: true
   "2-ff00:0:211":
@@ -185,6 +189,8 @@ class TestExtractTopoInfo(unittest.TestCase):
         # Coordinator
         self.assertIs(topo.coordinator.bridge, topo.get_bridge_name("overlay_bridge1"))
         self.assertIs(topo.coordinator.host, topo.hosts['localhost'])
+        self.assertFalse(topo.coordinator.cpu_affinity.is_unrestricted())
+        self.assertEqual(str(topo.coordinator.cpu_affinity), "0")
         expected = UnderlayAddress(ipaddress.ip_address("192.168.244.2"), L4Port(8000))
         self.assertEqual(topo.coordinator.exposed_at, expected)
 
@@ -210,6 +216,8 @@ class TestExtractTopoInfo(unittest.TestCase):
         prom = cast(Prometheus, topo.additional_services[0])
         self.assertIs(prom.bridge, topo.get_bridge_name("overlay_bridge1"))
         self.assertEqual(prom.host, topo.hosts['localhost'])
+        self.assertFalse(prom.cpu_affinity.is_unrestricted())
+        self.assertEqual(str(prom.cpu_affinity), "1")
         expected = UnderlayAddress(ipaddress.ip_address("192.168.244.2"), L4Port(9090))
         self.assertEqual(prom.exposed_at, expected)
 
@@ -225,24 +233,30 @@ class TestExtractTopoInfo(unittest.TestCase):
         self.assertTrue(asys.is_core)
         self.assertFalse(asys.is_attachment_point)
         self.assertIs(asys.host, topo.hosts['localhost'])
+        self.assertTrue(asys.cpu_affinity.is_unrestricted())
         self.assertIsNone(asys.owner)
 
         asys = topo.ases[ISD_AS("1-ff00:0:111")]
         self.assertFalse(asys.is_core)
         self.assertTrue(asys.is_attachment_point)
         self.assertIs(asys.host, topo.hosts['localhost'])
+        self.assertTrue(asys.cpu_affinity.is_unrestricted())
         self.assertIsNone(asys.owner)
 
         asys = topo.ases[ISD_AS("1-ff00:0:112")]
         self.assertFalse(asys.is_core)
         self.assertFalse(asys.is_attachment_point)
         self.assertIs(asys.host, topo.hosts['localhost'])
+        self.assertFalse(asys.cpu_affinity.is_unrestricted())
+        self.assertEqual(str(asys.cpu_affinity), "0,1,2,3")
         self.assertEqual(asys.owner, "user1")
 
         asys = topo.ases[ISD_AS("1-ff00:0:113")]
         self.assertFalse(asys.is_core)
         self.assertFalse(asys.is_attachment_point)
         self.assertIs(asys.host, topo.hosts['localhost'])
+        self.assertFalse(asys.cpu_affinity.is_unrestricted())
+        self.assertEqual(str(asys.cpu_affinity), "2,3,5")
         self.assertEqual(asys.owner, "user1")
 
         asys = topo.ases[ISD_AS("2-ff00:0:210")]

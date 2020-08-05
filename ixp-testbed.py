@@ -78,10 +78,17 @@ def create_parser() -> argparse.ArgumentParser:
     update_parser.add_argument("-p", dest='as_pattern', default='.*',
         help="Regular expression matched against AS identifiers. Only matching ASes are updated."
              " Default: All ASes.")
+    update_parser.add_argument("-l", type=Path, dest='as_list', default=None,
+        help="File containing ISD-AS identifiers of the ASes to be updated. ASes are updated in the"
+             " order given in the file. If specified, -p is ignored.")
+    update_parser.add_argument("--rate", type=float, default=None,
+        help="Limits the rate of AS updates to the given value in ASes per minute.")
     update_parser.add_argument("-d", action='store_true', dest='detach',
         help="Do not wait for updates to complete. No output is forwarded.")
     update_parser.add_argument("-f", action='store_true', dest='force',
         help="Install the configuration from the coordinator even if the AS appears to be up to date.")
+    update_parser.add_argument("--no-restart", action='store_true',
+        help="Do not restart the AS after installing a new configuration.")
     update_parser.set_defaults(exec_subcommand=ixp_testbed.run.commands.update)
 
     # policy subcommand
@@ -100,16 +107,23 @@ def create_parser() -> argparse.ArgumentParser:
     # stats subcommand
     stats_parser = subparsers.add_parser("stats",
         help="Take performance measurements.")
+    stats_parser.add_argument("output_file", type=Path,
+        help="File to store the measurements in. If this is an existing file, it should have been"
+             " created by a previous run of this command. The new measurements will be merged into"
+             " the existing file.")
+    stats_parser.add_argument("-e", dest='experiment', type=str, default="default",
+        help="Name of the experiment as will be written to the result file. Default: 'default'"
+    )
     stats_parser.add_argument("-p", dest='as_pattern', default='.*',
         help="Regular expression matched against AS identifiers. Measurements are made only in matching ASes."
              " Default: All ASes.")
     stats_parser.add_argument("--services", metavar="executable", nargs='*', default=[],
         help="List of SCION executables (bin/border, bin/beacon_srv, etc.) to record separate statists for."
              " By default only AS level statistics are returned.")
-    stats_parser.add_argument("-i", dest='interval', type=float, default=60.0,
-        help="Time interval to take measurements over in seconds. Default: 60")
-    stats_parser.add_argument("-c", dest="count", type=int, default=1,
-    help="The number of measurements to take. Default: 1")
+    stats_parser.add_argument("-i", dest='interval', type=float, default=10.0,
+        help="Time interval to take measurements over in seconds. Default: 10")
+    stats_parser.add_argument("-c", dest="count", type=int, default=2,
+    help="The number of measurements to take. Default: 2")
     stats_parser.set_defaults(exec_subcommand=ixp_testbed.run.commands.stats)
 
     # cntrs subcommand

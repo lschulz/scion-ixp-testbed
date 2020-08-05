@@ -113,9 +113,8 @@ class DockerNetwork(Bridge):
             log.warning("Disconnecting %s from Docker network %s failed.", isd_as, self.name)
 
 
-    def connect_coordinator(self, coord: Coordinator) -> None:
-        ip, _ = coord.get_address()
-        self._connect(coord.get_container(), ip, coord.host)
+    def connect_container(self, cntr, ip: IpAddress, host: Host) -> None:
+        self._connect(cntr, ip, host)
 
 
     def _connect(self, cntr, ip: IpAddress, host: Host) -> None:

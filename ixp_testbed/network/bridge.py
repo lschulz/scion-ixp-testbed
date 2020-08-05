@@ -4,44 +4,52 @@ underlying their links."""
 from abc import ABC, abstractmethod
 from collections import defaultdict
 import logging
-from typing import DefaultDict, Dict, Iterator, Optional, Tuple
+from typing import DefaultDict, Dict, Iterator, Optional, Tuple, Union
 
 from ixp_testbed import errors
-from ixp_testbed.address import IfId, IpAddress, IpNetwork, ISD_AS, L4Port, UnderlayAddress
+from ixp_testbed.address import (
+    ISD_AS,
+    IfId,
+    IpAddress,
+    IpNetwork,
+    L4Port,
+    UnderlayAddress,
+)
 from ixp_testbed.constants import BR_DEFAULT_PORT
+from ixp_testbed.host import Host
 from ixp_testbed.scion import AS, Link
 
 log = logging.getLogger(__name__)
+
+_Cntr = Union[ISD_AS, str]
 
 
 class Bridge(ABC):
     """Abstract base class for bridges connecting Docker containers.
 
     Implements assignment of IP addresses and ports to border router interfaces.
-    If the bridge is also used for connecting the coordinator to ASes IP addresses can be assigned
-    with `assign_ip_address`.
+    If the bridge is also used for connecting the coordinator and other control services to ASes IP,
+    addresses can be assigned with `assign_ip_address`.
 
     :ivar _name: Name of the network.
     :ivar _ip_network: The IP subnet addresses are allocated from.
-    :ivar _as_map: Maps each AS connected to the bridge to exactly one IP address.
-    :ivar _ip_map: Maps IP addresses assigned to at least one AS to a mapping from border router
-                   interface to L4 port (`PortMap`). Multiple ASes can use the same IP address.
+    :ivar _as_map: Maps every containers connected to the bridge to exactly one IP address.
+                   Containers either host an AS or a topology control service like the coordinator.
+                   AS containers are identified by ISD-AS number, and control services by a unique
+                   string.
+    :ivar _ip_map: Maps IP addresses assigned to at least one AS container to a mapping from border
+                   router interface to L4 port (`PortMap`). Multiple ASes can use the same IP
+                   address. The map also contains entries for control services and ASes whose IP was
+                   assigned by assign_ip_address(). These entries always map to port 0 and merely
+                   reserve the IP address.
     """
-
-    _COORD_ISD_AS = ISD_AS()
-    """Pseudo AS ID identifying the coordinator."""
-
-    _COORD_IFID = IfId(0)
-    """Pseudo interface identifier for connections to the coordinator."""
-
     def __init__(self, name: str, ip_network: IpNetwork):
         self._name = name
         self._ip_network = ip_network
 
-        PortMap = Dict[Tuple[ISD_AS, IfId], L4Port]
-        self._as_map: Dict[ISD_AS, IpAddress] = {}
+        PortMap = Dict[Union[Tuple[ISD_AS, IfId], _Cntr], L4Port]
+        self._as_map: Dict[_Cntr, IpAddress] = {}
         self._ip_map: DefaultDict[IpAddress, PortMap] = defaultdict(dict)
-
 
     @property
     def name(self):
@@ -124,25 +132,25 @@ class Bridge(ABC):
         """Disconnect the given AS from the network."""
         raise NotImplementedError()
 
-    def connect_coordinator(self, coord):
-        """Connect the coordinator to the network.
+    def connect_container(self, cntr, ip: IpAddress, host: Host):
+        """Connect an arbitrary container to the network, e.g., the coordinator.
 
-        At the moment only Docker bridges and overlay networks can be used as coordinator network.
+        At the moment only Docker bridges and overlay networks can be used as coordinator network,
+        therefore only these network types implement this method.
+
+        :param cntr: The container to connect.
+        :param ip: IP address to assign to the container.
+        :param host: The host `cntr` runs on.
         """
         raise NotImplementedError()
 
-    def get_ip_address(self, isd_as) -> Optional[IpAddress]:
-        """Get the IP address assigned to an AS.
+    def get_ip_address(self, ctr: _Cntr) -> Optional[IpAddress]:
+        """Get the IP address assigned to a container.
 
-        :param isd_as: AS identifier or Coordinator instance to get the IP address of the
-                       coordinator if it is reachable on this network.
+        :param isd_as: ISD-AS number or string identifying a non-AS container in the network.
         :returns: The assigned IP address or `None`, if no address is assigned.
         """
-        if isinstance(isd_as, ISD_AS):
-            return self._as_map.get(isd_as, None)
-        else:
-            return self._as_map.get(self._COORD_ISD_AS, None)
-
+        return self._as_map.get(ctr)
 
     def get_br_address(self, isd_as: ISD_AS, ifid: IfId) -> Optional[UnderlayAddress]:
         """Get the underlay address assigned to a BR interface.
@@ -164,48 +172,44 @@ class Bridge(ABC):
         return UnderlayAddress(ip, port)
 
 
-    def assign_ip_address(self, to, pref_ip: Optional[IpAddress]=None) -> IpAddress:
-        """Assign an IP address to the given AS that will remain assigned until freed with
+    def assign_ip_address(self, to: _Cntr, pref_ip: Optional[IpAddress]=None) -> IpAddress:
+        """Assign an IP address to the given container that will remain assigned until freed with
         `free_ip_address`.
 
-        Use this function to reserve an address for an AS even if it has no links using this
-        network. If an address has been assigned to the AS by this method the previously assigned
-        address is returned. Note that a single call to `free_ip_address` is enough to undo all
-        calls to `assign_ip_address` for that AS.
+        Use this method to reserve an address for an AS even if it has no links using this network.
+        If an address has been assigned to the AS by this method the previously assigned address is
+        returned. Note that a single call to `free_ip_address` is enough to undo all calls to
+        `assign_ip_address` for that AS.
+
+        This method is also used for assigning IP addresses to non-AS containers like the
+        coordinator.
 
         By default, the lowest availabile IP is selected. If a specific IP is desired, it can be
         specified as `pref_ip`. If the preferred IP is not availabile, a `NotAvailabile` exception
         is raised.
 
-        :param to: Pair of `ISD_AS` and `AS` or `Coordinator`.
+        :param to: ISD-AS number or string identifying a control service container.
         :param pref_ip: Optional IP to assign if possible.
         :returns: The assigned IP address.
         :raises NotAvailabile: `pref_ip` is not availabile.
         :raises OutOfResources: All IP addresses availabile in the bridge's subnet where assigned
                                 already.
         """
-        isd_as = to[0] if isinstance(to, tuple) else self._COORD_ISD_AS
-
         try:
-            ip = self._as_map[isd_as]
-
+            ip = self._as_map[to]
         except KeyError:
             ip = self._select_ip(pref_ip)
-            self._as_map[isd_as] = ip
+            self._as_map[to] = ip
 
-            port_map = self._ip_map[ip]
-            port_map[(self._COORD_ISD_AS, self._COORD_IFID)] = L4Port(0)
+        # Create a dummy entry in the port map to keep track of assigned IPs even if no BR interface
+        # is associated with them.
+        port_map = self._ip_map[ip]
+        port_map[to] = L4Port(0)
 
-            return ip
-
-        else:
-            port_map = self._ip_map[ip]
-            port_map[(self._COORD_ISD_AS, self._COORD_IFID)] = L4Port(0)
-
-            return ip
+        return ip
 
 
-    def free_ip_address(self, isd_as: ISD_AS) -> int:
+    def free_ip_address(self, ctr: _Cntr) -> int:
         """Delete an assignment made with `assign_address`.
 
         The AS will keep its IP address until all BR interfaces registered with `assign_br_address`
@@ -213,13 +217,13 @@ class Bridge(ABC):
 
         :returns The number of BR interfaces using the same IP still assigned.
         """
-        ip = self._as_map[isd_as]
+        ip = self._as_map[ctr]
         port_map = self._ip_map[ip]
-        del port_map[(self._COORD_ISD_AS, self._COORD_IFID)]
+        del port_map[ctr]
 
         port_map_len = len(port_map)
         if port_map_len == 0:
-            del self._as_map[isd_as]
+            del self._as_map[ctr]
             del self._ip_map[ip]
 
         return port_map_len

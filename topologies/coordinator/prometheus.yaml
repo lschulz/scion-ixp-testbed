@@ -41,6 +41,11 @@ prometheus:
 
   scrape_interval: 5s # Interval in which metrics are collected.
 
+  # Optional host directory for the Prometheus time series database.
+  # Allows to persist data between runs. Must be an absolute path to an existing directory
+  # if not on localhost.
+  storage_dir: "./prometheus"
+
   # List of ASes to collect metric from.
   targets:
     - "1-ff00:0:110"

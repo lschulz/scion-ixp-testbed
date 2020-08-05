@@ -10,7 +10,7 @@ from typing import Dict, List, Optional
 
 import docker
 
-from ixp_testbed.address import IpNetwork, ISD_AS
+from ixp_testbed.address import ISD_AS, IpNetwork
 import ixp_testbed.constants as const
 from ixp_testbed.coordinator import Coordinator
 from ixp_testbed.host import Host, push_docker_image, scan_hosts
@@ -19,8 +19,7 @@ from ixp_testbed.network.bridge import (
 from ixp_testbed.scion import AS, Link
 from ixp_testbed.service import ContainerizedService
 from ixp_testbed.util.docker import (
-    format_published_ports, invoke_scion_docker_script, run_cmd_in_cntr, run_cmd_in_cntrs,
-    run_cmds_in_cntrs)
+    run_cmd_in_cntr, run_cmd_in_cntrs, run_cmds_in_cntrs, start_scion_cntr)
 
 log = logging.getLogger(__name__)
 
@@ -114,8 +113,8 @@ class Topology:
             return ""
 
 
-    def get_coord_cntr_name(self) -> str:
-        """Returns the name of the container for the SCIONLab Coordinator."""
+    def get_coord_name(self) -> str:
+        """Returns the name prefix for components of the SCIONLab Coordinator."""
         return self.get_name_prefix() + "coord"
 
 
@@ -156,17 +155,18 @@ class Topology:
         """
         if len(self.hosts) > 1:
             self._push_docker_image(workdir)
-            self._push_coord_image(workdir)
+            if self.coordinator.debug:
+                self._push_coord_image(workdir)
 
         for isd_as, asys in self.ases.items():
             self._start_container(isd_as, asys, workdir, sc)
 
         if self.coordinator is not None:
-            self.coordinator.start(self.get_coord_cntr_name())
+            self.coordinator.start()
             self.coordinator.init(self, workdir) # Make sure the coordinator is initialized
 
         for service in self.additional_services:
-            service.start(self.get_name_prefix(), workdir)
+            service.start(self, self.get_name_prefix(), workdir)
 
 
     def _start_container(self, isd_as: ISD_AS, asys: AS, workdir: Path, sc: Path) -> None:
@@ -208,24 +208,29 @@ class Topology:
                 # we remove them here.
                 shutil.rmtree(mount_dir.joinpath("gen"), ignore_errors=True)
                 shutil.rmtree(mount_dir.joinpath("gen-cache"), ignore_errors=True)
-            env = {
-                'SCION_CNTR': cntr_name,
-                'SCION_IMG': const.STANDALONE_TOPO_AS_IMG_NAME if self.coordinator is None \
-                            else const.COORD_TOPO_AS_IMG_NAME,
-                'SCION_MOUNT': mount_dir
-            }
-            if len(ports) > 0:
-                env['DOCKER_ARGS'] = format_published_ports(ports)
-            invoke_scion_docker_script(sc, "start", env)
-            cntr = dc.containers.get(cntr_name)
+
+            kwargs = {}
+            if not asys.cpu_affinity.is_unrestricted():
+                kwargs['cpuset_cpus'] = str(asys.cpu_affinity)
+            cntr = start_scion_cntr(dc, const.AS_IMG_NAME,
+                cntr_name=cntr_name,
+                mount_dir=mount_dir,
+                ports=ports,
+                additional_args=kwargs
+            )
             asys.container_id = cntr.id
-        else:
+
+        else: # Start container on a remote host
+            kwargs = {}
+            if not asys.cpu_affinity.is_unrestricted():
+                kwargs['cpuset_cpus'] = str(asys.cpu_affinity)
             cntr = dc.containers.run(
-                const.COORD_TOPO_AS_IMG_NAME,
+                const.AS_IMG_NAME,
                 name=cntr_name,
                 tty=True, # keep the container running
                 detach=True,
-                ports=ports
+                ports=ports,
+                **kwargs
             )
             asys.container_id = cntr.id
 
@@ -240,9 +245,10 @@ class Topology:
         else:
             # Connect the new container to the coordinator.
             self.coordinator.bridge.connect(isd_as, asys)
-            # Allow the coordinator to access the container via SSH.
-            self._authorize_coord_ssh_key(cntr, workdir)
-            self._start_sshd(cntr)
+            if asys.is_attachment_point or self.coordinator.ssh_management:
+                # Allow the coordinator to access the container via SSH.
+                self._authorize_coord_ssh_key(cntr, workdir)
+                self._start_sshd(cntr)
 
         # Connect bridges SCION links.
         connect_bridges(isd_as, asys)
@@ -298,10 +304,11 @@ class Topology:
             disconnect_bridges(isd_as, asys, non_docker_only=True)
             connect_bridges(isd_as, asys, non_docker_only=True)
 
-            # Restart the SSH server for attachment points.
-            if self.coordinator is not None and asys.is_attachment_point:
-                dc = asys.host.docker_client
-                self._start_sshd(dc.container.get(asys.container_id))
+            # Restart the SSH server in managed ASes.
+            if self.coordinator is not None:
+                if asys.is_attachment_point or self.coordinator.ssh_management:
+                    dc = asys.host.docker_client
+                    self._start_sshd(dc.container.get(asys.container_id))
 
             return True # container is now running
         else:
@@ -428,7 +435,7 @@ class Topology:
         if cntr.status != "running":
             return False
 
-        exit_code, response = cntr.exec_run(
+        _, response = cntr.exec_run(
             "/bin/bash -l -c './scion.sh status'", user=const.SCION_USER, tty=True)
 
         return len(response) == 0 # if everything is running, there is no output
@@ -443,14 +450,7 @@ class Topology:
         :param out: Text stream to print to.
         """
         if self.coordinator is not None:
-            coord = self.coordinator
-            cntr_name = self.get_coord_cntr_name()
-            status = "no container"
-            if coord.container_id:
-                dc = coord.host.docker_client
-                cntr = self._get_container_by_id(cntr_name, coord.container_id, dc)
-                status = cntr.status
-            out.write("### Coordinator: {} ({})\n".format(status, cntr_name))
+            self.coordinator.print_status(out)
 
         for service in self.additional_services:
             status = "no container"
@@ -481,7 +481,7 @@ class Topology:
     def _push_docker_image(self, workdir: Path) -> None:
         """Make sure all remote host participating in the topology have the SCION AS image."""
         local_dc = self.hosts['localhost'].docker_client
-        local_image = local_dc.images.get(const.COORD_TOPO_AS_IMG_NAME)
+        local_image = local_dc.images.get(const.AS_IMG_NAME)
 
         hosts = scan_hosts(self.hosts.values(), local_image)
 

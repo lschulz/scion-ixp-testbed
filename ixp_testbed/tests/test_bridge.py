@@ -20,23 +20,22 @@ class TestBridge(unittest.TestCase):
     def test_ip_addr_assignment(self):
         br = DockerBridge("test", LocalHost(), ipaddress.IPv4Network("10.0.0.0/29"))
         asys = AS(LocalHost(), False)
-        coord = Coordinator(LocalHost(), br)
 
         # Assign coordinator IP
         for _ in range(2): # Multiple calls must return the same address
-            ip = br.assign_ip_address(coord)
+            ip = br.assign_ip_address("coordinator")
             self.assertEqual(ip, ipaddress.IPv4Address(0x0A000002))
 
         # Assign AS IPs
         for asys in range(1, 5):
-            ip = br.assign_ip_address((ISD_AS(asys), asys))
+            ip = br.assign_ip_address(ISD_AS(asys))
             self.assertEqual(ip, ipaddress.IPv4Address(0x0A000000 + asys + 2))
 
         with self.assertRaises(errors.OutOfResources):
-            br.assign_ip_address((ISD_AS(8), asys))
+            br.assign_ip_address(ISD_AS(8))
 
         # Retrive assigned addresses
-        self.assertEqual(br.get_ip_address(coord), ipaddress.IPv4Address(0x0A000002))
+        self.assertEqual(br.get_ip_address("coordinator"), ipaddress.IPv4Address(0x0A000002))
         for asys in range(1, 5):
             ip = br.get_ip_address(ISD_AS(asys))
             self.assertEqual(ip, ipaddress.IPv4Address(0x0A000000 + asys + 2))
@@ -45,7 +44,7 @@ class TestBridge(unittest.TestCase):
         ip = br.get_ip_address(ISD_AS(2))
         self.assertEqual(br.free_ip_address(ISD_AS(2)), 0)
         self.assertIsNone(br.get_ip_address(ISD_AS(2)))
-        self.assertEqual(br.assign_ip_address((ISD_AS(6), asys)), ip)
+        self.assertEqual(br.assign_ip_address(ISD_AS(6)), ip)
 
 
     def test_br_addr_assignment(self):
@@ -67,7 +66,7 @@ class TestBridge(unittest.TestCase):
         # AS IP assignment
         for as_id in range(1, 6):
             isd_as = ISD_AS(as_id)
-            self.assertEqual(br.get_ip_address(isd_as), br.assign_ip_address((isd_as, asys)))
+            self.assertEqual(br.get_ip_address(isd_as), br.assign_ip_address(isd_as))
 
         # Retrieve BR interface underlay addresses
         for ifid in range(1, 3):

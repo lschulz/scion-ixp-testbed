@@ -73,11 +73,11 @@ def main(argv):
             logging.info('Configuration unchanged (version %s). Nothing to do.',
                          config_info.version)
         else:
-            install_config(config)
+            install_config(config, args.no_restart)
             confirm_deployed(args)
     else:
         tar = tarfile.open(args.tar, mode='r')
-        install_config(tar)
+        install_config(tar, args.no_restart)
 
 
 def parse_command_line_args(argv):
@@ -100,6 +100,9 @@ def parse_command_line_args(argv):
     parser.add_argument('--tar')
 
     parser.add_argument('--version', action='version', version='%(prog)s 2.0, api/v2, March 2020')
+
+    parser.add_argument('--no-restart', action='store_true',
+                        help='Do not start the AS again after a configuration update.')
 
     return parser.parse_args(argv[1:])
 
@@ -268,13 +271,14 @@ def _error_exit(*args, **kwargs):
     sys.exit(1)
 
 
-def install_config(tar):
+def install_config(tar, no_restart):
     try:
         tmpdir = tempfile.mkdtemp()
         tar.extractall(path=tmpdir)
         stop_scion()
+        delete_gen_cache()
         install_scion_config(tmpdir)
-        start_scion()
+        start_scion(no_restart)
     finally:
         shutil.rmtree(tmpdir)
 
@@ -286,15 +290,20 @@ def install_scion_config(tmpdir):
     _mv_dir(tmpdir, 'gen', sc)
 
 
-def start_scion():
+def start_scion(no_restart):
     subprocess.run(['supervisor/supervisor.sh', 'reload'], cwd=SCION_CONFIG_PATH, check=True)
     subprocess.run(['./gen-certs.sh'], cwd=SCION_CONFIG_PATH, check=True)
     os.makedirs('gen-cache', exist_ok=True)
-    subprocess.run(['./scion.sh', 'run', 'nobuild'], cwd=SCION_CONFIG_PATH, check=True)
+    if not no_restart:
+        subprocess.run(['./scion.sh', 'run', 'nobuild'], cwd=SCION_CONFIG_PATH, check=True)
 
 
 def stop_scion():
     subprocess.run(['./scion.sh', 'stop'], cwd=SCION_CONFIG_PATH, check=True)
+
+
+def delete_gen_cache():
+    _clear_directory(os.path.join(SCION_CONFIG_PATH, 'gen-cache'))
 
 
 def _mv_dir(srcdir, dirname, dstdir):

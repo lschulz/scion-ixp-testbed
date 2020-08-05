@@ -1,9 +1,13 @@
 from abc import ABC, abstractmethod
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Iterator, Optional
 
 import docker
+
+from ixp_testbed.address import IpAddress
+from ixp_testbed.network.docker import DockerNetwork
+from ixp_testbed.util.cpu_affinity import CpuSet
 
 log = logging.getLogger(__name__)
 
@@ -12,10 +16,14 @@ class ContainerizedService(ABC):
     """Abstract base class for additional services included in the topology.
 
     :ivar host: Docker host the service is ran on.
+    :ivar bridge: Network for communication with ASes.
+    :ivar cpu_affinity: The CPUs on `host` the container is allowed to run on.
     :ivar container_id: ID of the Docker container hosting the service, if any.
     """
-    def __init__(self, host):
+    def __init__(self, host, bridge: DockerNetwork, cpu_affinity: CpuSet = CpuSet()):
         self.host = host
+        self.bridge = bridge
+        self.cpu_affinity = cpu_affinity
         self.container_id: Optional[str] = None
 
     @property
@@ -25,9 +33,18 @@ class ContainerizedService(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def start(self, name_prefix: str, workdir: Path) -> None:
+    def reserve_ip_addresses(self, ip_gen: Optional[Iterator[IpAddress]] = None):
+        """Reserve IP addresses for the service.
+
+        :param ip_gen: Optional sequence the IP addresses are taken from.
+        """
+        raise NotImplementedError()
+
+    @abstractmethod
+    def start(self, topo, name_prefix: str, workdir: Path) -> None:
         """Start the service.
 
+        :param topo: The topology.
         :param name_prefix: Name prefix for the container name.
         :param workdir: The topology's work directory.
         """
@@ -84,6 +101,8 @@ class ContainerizedService(ABC):
         :returns: Newly created container.
         """
         dc = self.host.docker_client
+        if not self.cpu_affinity.is_unrestricted():
+            kwargs['cpuset_cpus'] = str(self.cpu_affinity)
         cntr = dc.containers.run(*args, **kwargs)
         self.container_id = cntr.id
         return cntr

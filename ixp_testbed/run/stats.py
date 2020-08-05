@@ -1,32 +1,64 @@
 """Performance measurement tools."""
 
+from datetime import datetime, timezone
+import logging
 import re
 import time
-from collections import defaultdict
-from typing import Dict, Iterable, List, Set
+from typing import Dict, List, MutableMapping, Set
 
 import docker
 
-from ixp_testbed.scion import AS
 from ixp_testbed.address import ISD_AS
+from ixp_testbed.scion import AS
 from ixp_testbed.topology import Topology
 
+log = logging.getLogger(__name__)
 
-def measure_perf_stats(topo: Topology,
+
+class Measurements:
+    """Records timestamped performance metrics sorted by experiment, AS, and process."""
+    def __init__(self):
+        self.data: Dict = {}
+        self.experiment = "default"
+        self.as_id = "undefined"
+
+    def add_values(self, process: str, timestamp: float, cpu_time: float):
+        """Add a measurement values for the given process.
+
+        The AS and experiment the new values belong to are controlled by `self.as_id` and
+        `self.experiment`.
+
+        :param process: The process the measurements belong to. Use 'total' for the container totals.
+        :param timestamp: Unix timestamp of the measurement (in seconds).
+        :param cpu_time: Total elapsed CPU time of the process/process group (in seconds).
+        """
+        as_data = self.data.setdefault(self.as_id, {})
+        process_data = as_data.setdefault(process, {})
+        timeseries = process_data.setdefault(self.experiment, {})
+
+        if len(timeseries) == 0:
+            timeseries['timestamp'] = []
+            timeseries['cpu_time'] = []
+
+        timeseries['timestamp'].append(timestamp)
+        timeseries['cpu_time'].append(cpu_time)
+
+
+def measure_perf_stats(topo: Topology, measurements: Measurements,
     as_pattern: str = ".*", services: Set[str] = set(),
-    interval: float = 60.0, count: int = 1):
-    """Measure the average CPU utilization in AS containers.
+    interval: float = 10.0, count: int = 2) -> None:
+    """Record the CPU time of AS processes in containers.
 
-    CPU utilization is measured for all processes in the matching containers in total
+    CPU time is measured for all processes in the matching containers in total
     and for processes selected by the `services` parameter individually.
 
+    :param measurements: Set of measurements to add the new data to.
     :param as_pattern: Regular expression matched against ISD-AS strings. Measurements are taken in
                        matching ASes only.
     :param services: Set of strings identifying SCION service executables, like "bin/border",
-                     "bin/beacon_srv", and "bin/path_srv".
+                     and "bin/cs".
     :param interval: Time interval to take measurements over.
     :param count: The number of measurements to take.
-    :returns: Dictionary containing the measured CPU utilizations.
     """
     # Get ASes matching the pattern
     ases = []
@@ -44,40 +76,15 @@ def measure_perf_stats(topo: Topology,
     for isd_as in ases:
         process_map[isd_as] = _get_pid_map(isd_as, topo.ases[isd_as], services)
 
-    # Prepare dictionary to hold the results
-    measurements = {str(isd_as): {'cpu': [], 'processes': defaultdict(list)} for isd_as in ases}
-
     # Take the measurements
-    # Get current wall-clock time and CPU time
-    values_t0 = []
-    for isd_as in ases:
-        values_t0.append(
-            _get_current_values(isd_as, topo.ases[isd_as], process_map[isd_as].keys()))
-
-    for _ in range(count):
-        # Wait
-        time.sleep(interval)
-
-        # Get current wall-clock time and CPU time
-        values_t1 = []
+    for i in range(count):
         for isd_as in ases:
-            values_t1.append(
-                _get_current_values(isd_as, topo.ases[isd_as], process_map[isd_as].keys()))
-
-        # Calculate deltas and CPU utilization
-        for isd_as, t0, t1 in zip(ases, values_t0, values_t1):
-            delta = t1 - t0
-            m = measurements[str(isd_as)]
-            m['cpu'].append(delta.total_cpu_time / delta.wall_clock_time)
-            for pid, cpu_time in delta.processes.items():
-                command = process_map[isd_as][pid]
-                m['processes'][command].append(cpu_time / delta.wall_clock_time)
-
-        # Take measurements back-to-back
-        values_t0 = values_t1
-        values_t1 = None
-
-    return measurements
+            measurements.as_id = isd_as.as_str()
+            data = _get_current_values(isd_as, topo.ases[isd_as], process_map[isd_as])
+            for process, values in data.items():
+                measurements.add_values(process, **values)
+        if i < count - 1:
+            time.sleep(interval)
 
 
 def _get_pids(isd_as: ISD_AS, asys: AS) -> List[str]:
@@ -111,53 +118,44 @@ def _get_pid_map(isd_as: ISD_AS, asys: AS, executables: Set[str]) -> Dict[int, s
     return pid_map
 
 
-class _TimerValues:
-    """Holds timer values obtained from AS containers.
-
-    :ivar wall_clock_time: Wall-clock time elapsed in the container.
-    :ivar total_cpu_time: Total CPU time consumed by the container.
-    :ivar processes: Map from process id to cpu time consumed by that process.
-    """
-    def __init__(self, wall_clock_time, total_cpu_time, processes):
-        self.wall_clock_time: float = wall_clock_time
-        self.total_cpu_time: float = total_cpu_time
-        self.processes: Dict[int, float] = processes
-
-    def __sub__(self, other):
-        """Calculate elapsed time between two timepoints.
-
-        Elapsed time is calculated for all pids with a value in both `self` and `other`.
-        """
-        wall_clock_time = other.wall_clock_time - self.wall_clock_time
-        total_cpu_time = other.total_cpu_time - self.total_cpu_time
-
-        processes = {}
-        for pid, cpu_time in self.processes.items():
-            if pid in other.processes:
-                processes[pid] = other.processes[pid] - cpu_time
-
-        return _TimerValues(wall_clock_time, total_cpu_time, processes)
-
-
-def _get_current_values(isd_as: ISD_AS, asys: AS, pids: Iterable[int]) -> _TimerValues:
+def _get_current_values(isd_as: ISD_AS, asys: AS, processes: MutableMapping[int, str]
+    ) -> Dict[str, Dict[str, float]]:
     """Get the current timer values in the given AS.
 
     :param pids: Set of processes (identified by PID) for which to grab elapsed CPU time.
+                 If a process does not exist anymore, it is removed from the mapping.
     """
-    cmd = ["cat", "/proc/uptime",
-           "/sys/fs/cgroup/cpu/docker/%s/cpuacct.usage" % asys.container_id]
+    cmd = ["cat", "/sys/fs/cgroup/cpu/docker/%s/cpuacct.usage" % asys.container_id]
+    pids = list(processes.keys())
     cmd.extend("/proc/%s/stat" % pid for pid in pids)
-    result = asys.host.run_cmd(cmd, check=True, capture_output=True)
+
+    result = asys.host.run_cmd(cmd, capture_output=True)
+    if (result.exit_code != 0):
+        log.warning("Non-zero exit code from cat:\n%s", result.output)
 
     lines = result.output.splitlines()
-    timestamp = float(lines[0].split()[0])  # original value is in seconds (10 ms resolution)
-    total_cpu_time = 1e-9 * float(lines[1]) # original value is in nanoseconds
+    if lines[0].startswith("cat"):
+        log.critical("Container of AS %s is gone." % isd_as)
+        exit(1)
 
-    processes = {}
-    for line in lines[2:]:
-        fields = line.split()
-        pid = int(fields[0])
-        cpu_time = 1e-2 * (float(fields[13]) + float(fields[14])) # original value in jiffies
-        processes[pid] = cpu_time
+    # Parse total container CPU time
+    timestamp = datetime.now(timezone.utc).timestamp()
+    values = {'total': {
+        'timestamp': timestamp,
+        'cpu_time': 1e-9 * float(lines[0]) # original value is in nanoseconds
+    }}
 
-    return _TimerValues(timestamp, total_cpu_time, processes)
+    # Parse per process CPU time
+    for pid, line in zip(pids, lines[1:]):
+        if not line.startswith("cat"):
+            fields = line.split()
+            assert pid == int(fields[0])
+            values[processes[pid]] = {
+                'timestamp': timestamp,
+                'cpu_time': 1e-2 * (float(fields[13]) + float(fields[14])) # original value in jiffies
+            }
+        else:
+            log.warning("Process '%s' (%d) is gone.", processes[pid], pid)
+            del processes[pid]
+
+    return values
