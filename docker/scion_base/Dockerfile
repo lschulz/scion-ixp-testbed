@@ -2,6 +2,7 @@ from ubuntu:18.04
 
 ARG SCION_UID=1000
 ARG SCION_GID=1000
+ARG DOCKER_GID=117
 
 RUN apt-get update && apt-get upgrade -y
 
@@ -12,9 +13,14 @@ RUN apt-get install -y sudo git wget g++ unzip zip iproute2 iputils-ping
 
 # Create scion user
 RUN groupadd -g ${SCION_GID:?} scion
+RUN groupadd -g ${DOCKER_GID:?} docker
 RUN useradd -m -s /bin/bash -u ${SCION_UID:?} -g scion -G sudo scion
+RUN gpasswd -a scion docker
 RUN gpasswd -a scion sudo
 RUN echo 'scion ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/scion
+
+# Install docker after creating the docker group with the requested GID
+RUN apt-get install -y docker docker-compose
 
 USER scion
 WORKDIR /home/scion
@@ -32,6 +38,7 @@ ENV SC="$HOME/go/src/github.com/scionproto/scion"
 ENV PYTHONPATH="$SC/python:$PYTHONPATH"
 RUN mkdir -p $SC
 RUN git clone --branch v2020.03 https://github.com/netsec-ethz/scion $SC/.
+#RUN git clone https://github.com/scionproto/scion $SC/.
 
 # Install SCION dependencies
 # Note: ./env/deps fails if setuptools is not installed first

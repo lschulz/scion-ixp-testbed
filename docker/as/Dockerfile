@@ -1,4 +1,5 @@
-FROM scion:latest
+ARG BASE_IMAGE
+FROM $BASE_IMAGE
 
 USER scion
 
@@ -13,6 +14,6 @@ COPY --chown=scion:users gen-certs.sh /home/scion/go/src/github.com/scionproto/s
 RUN chmod 755 /home/scion/go/src/github.com/scionproto/scion/gen-certs.sh
 
 # Install and configure an SSH server.
-RUN sudo apt update && sudo apt-get install -y openssh-server
+RUN sudo apt-get update && sudo apt-get install -y openssh-server
 COPY --chown=root:root sshd_config /etc/ssh/
 RUN sudo chmod 644 /etc/ssh/sshd_config

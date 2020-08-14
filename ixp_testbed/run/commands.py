@@ -27,7 +27,7 @@ def start(args):
     try:
         # Make sure the containers are running
         topo.create_bridges()
-        topo.start_containers(workdir=args.workdir, sc=args.sc)
+        topo.start_containers(workdir=args.workdir, sc=args.sc, push_images=args.push_images)
         # Run SCION in containers
         if args.mode == 'sequential':
             topo.run_scion()
@@ -48,7 +48,7 @@ def start_cntrs(args):
 
     try:
         topo.create_bridges()
-        topo.start_containers(workdir=args.workdir, sc=args.sc)
+        topo.start_containers(workdir=args.workdir, sc=args.sc, push_images=args.push_images)
     finally:
         topo.close_host_connections()
         topo.save(args.workdir.joinpath(CONFIG_DATA_FILE))

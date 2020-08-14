@@ -71,16 +71,23 @@ def generate(name: Optional[str], input_file_path: Path, workdir: Path, sc: Path
 
     # Make sure SCION images exists
     try:
-        dc.images.get("scion")
+        dc.images.get(const.SCION_BASE_IMG_NAME)
     except docker.errors.ImageNotFound:
         # Make sure the scion user in the container has the same UID and GID as the user on the
         # host, so volumes mounted from the host work properly. Since UID and GID are set when the
         # image is created, mounting volumes on another host requires fixing permissions when
         # containers are created.
-        build_args = {'SCION_UID': str(os.getuid()), 'SCION_GID': str(os.getgid())}
+        # Assigning the same GID to the 'docker' group as on the host allows the container to access
+        # the host's Docker daemon without sudo (by mounting '/var/run/docker.sock').
+        build_args = {
+            'SCION_UID': str(os.getuid()),
+            'SCION_GID': str(os.getgid()),
+            'DOCKER_GID': _get_gid(topo.hosts['localhost'], "docker")
+        }
         _build_docker_image(const.SCION_BASE_IMG_NAME, "docker/scion_base", dc, build_args)
 
-    _build_docker_image(const.AS_IMG_NAME, "docker/as", dc)
+    build_args = {'BASE_IMAGE': const.SCION_BASE_IMG_NAME}
+    _build_docker_image(const.AS_IMG_NAME, "docker/as", dc, build_args)
     if topo.coordinator is None:
         _build_standalone_topology(topo, sc, workdir, dc)
     else:
@@ -101,6 +108,12 @@ def generate(name: Optional[str], input_file_path: Path, workdir: Path, sc: Path
     log.info("Created mount folders.")
 
     return topo
+
+
+def _get_gid(host: Host, group: str) -> str:
+    """Get the GID of the given group on `host`."""
+    result = host.run_cmd(["getent", "group", group], check=True, capture_output=True)
+    return result.output.split(":")[2]
 
 
 def extract_topo_info(topo_file: MutableMapping[str, Any], name: Optional[str] = None) -> Topology:
@@ -544,7 +557,8 @@ def _build_standalone_topology(topo: Topology, sc: Path, workdir: Path, dc: dock
     log.info("Starting SCION Docker container.")
     master_cntr = start_scion_cntr(dc, const.AS_IMG_NAME,
         cntr_name=topo.get_name_prefix() + const.MASTER_CNTR_NAME,
-        mount_dir=workdir.joinpath(const.MASTER_CNTR_MOUNT).resolve() # need absolute path
+        mount_dir=workdir.joinpath(const.MASTER_CNTR_MOUNT).resolve(), # need absolute path
+        volumes={"/var/run/docker.sock": {'bind': "/var/run/docker.sock", 'mode': 'rw'}}
     )
 
     try:
@@ -553,11 +567,9 @@ def _build_standalone_topology(topo: Topology, sc: Path, workdir: Path, dc: dock
         copy_to_container(master_cntr, processed_topo_file_path, const.SCION_TOPO_FILES_PATH)
 
         # Build a standalone topology in the master container
-        # SCION v2020.03: scion.sh fails because docker-compose is not found. docker-compose is used
-        # to start jaeger, which we do not need at this point. Disable error checking for now.
         log.info("Building standalone topology...")
         command = "./scion.sh topology --in-docker -c topology/topology.topo"
-        run_cmd_in_cntr(master_cntr, const.SCION_USER, command, check=False)
+        run_cmd_in_cntr(master_cntr, const.SCION_USER, command)
     except:
         raise
     finally:

@@ -141,7 +141,7 @@ class Topology:
             bridge.remove()
 
 
-    def start_containers(self, workdir: Path, sc: Path) -> None:
+    def start_containers(self, workdir: Path, sc: Path, push_images: bool) -> None:
         """Start all Docker containers of the topology and connect them with their network bridges.
 
         The network bridges must have been created when calling this method, e.g., by calling
@@ -152,8 +152,10 @@ class Topology:
 
         :param workdir: Directory containing the topology data.
         :param sc: Path to the root of the SCION source tree.
+        :param push_images: Whether to upload local Docker images to other Docker hosts when they do
+                            not have the images already.
         """
-        if len(self.hosts) > 1:
+        if len(self.hosts) > 1 and push_images:
             self._push_docker_image(workdir)
             if self.coordinator.debug:
                 self._push_coord_image(workdir)
@@ -216,7 +218,7 @@ class Topology:
                 cntr_name=cntr_name,
                 mount_dir=mount_dir,
                 ports=ports,
-                additional_args=kwargs
+                extra_args=kwargs
             )
             asys.container_id = cntr.id
 

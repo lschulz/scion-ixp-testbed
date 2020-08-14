@@ -196,6 +196,24 @@ policy is installed by
 Policies are deleted by `policy delete`. The currently active policies can be retrieved by
 `policy get`. To view the peering connections resulting from the policies, use `policy get_peers`.
 
+### Build Docker images manually
+The framework builds three Docker images when the first topology is created: (1) A SCION base
+image containing SCION and its dependencies, (2) an AS image, and (3) an image containing the
+coordinator (if required by the topology). You can build these images manually by running:
+```bash
+docker build -t scion --build-arg SCION_UID=<uid> --build-arg SCION_GID=<gid> --build-arg DOCKER_GID=<docker_gid> docker/scion_base
+docker build -t ixp_testbed_as --build_arg BASE_IMAGE=scion docker/as
+docker build -t scionlab_coord docker/coordinator
+```
+Replace `<uid>` and `<gid>` with the UID and GID of the user running `ixp-testbed.py`, and
+`<docker_gid>` with the GID of the 'docker' group.
+
+In a multi-host topology, locally built images are pushed to all host that do not have images with
+the same hashes already. Sometimes it is more convenient to build the images on every remote
+machine individually. Pass `--no-push-images` to the `cntrs start` and `start` subcommands to
+prevent overwriting already built images.
+
+
 Extras
 ------
 There are some additional command to debug and evaluate topologies:

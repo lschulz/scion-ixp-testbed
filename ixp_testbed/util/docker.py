@@ -27,8 +27,9 @@ def format_published_ports(ports: Dict[str, Tuple[str, str]]) -> str:
 def start_scion_cntr(dc: docker.DockerClient, image: str, *,
     cntr_name: str,
     mount_dir: Optional[Path] = None,
+    volumes: Mapping[str, Mapping[str, str]] = {},
     ports: Mapping[str, Tuple[str, str]] = {},
-    additional_args: Mapping[str, Any] = {}):
+    extra_args: Mapping[str, Any] = {}):
     """Create and run a dockerized SCION AS.
 
     :param dc: Docker client.
@@ -36,16 +37,17 @@ def start_scion_cntr(dc: docker.DockerClient, image: str, *,
     :param cntr_name: Name of the new container.
     :param mount_dir: Directory in which the the gen folder and logs of the AS are stored.
                       If `None`, no host directories are mounted in the container.
+    :param volumes: Additional volumes which will be availabile in the container.
     :param ports: Published ports as expected by `dc.containers.run`.
-    :param additional_args: Additional arguments passed to `dc.containers.run`.
+    :param extra_args: Additional arguments passed to `dc.containers.run`.
     :return: Docker container.
     """
-    volumes = {}
+    _volumes = dict(volumes)
     if mount_dir is not None:
         for dir in ["gen", "logs", "gen-cache", "gen-certs"]:
             host_dir = mount_dir.joinpath(dir)
             os.makedirs(host_dir, exist_ok=True)
-            volumes[str(host_dir)] = {
+            _volumes[str(host_dir)] = {
                 'bind': "/home/scion/go/src/github.com/scionproto/scion/" + dir,
                 'mode': 'rw'
             }
@@ -56,8 +58,8 @@ def start_scion_cntr(dc: docker.DockerClient, image: str, *,
         tty=True,
         detach=True,
         ports=ports,
-        volumes=volumes,
-        **additional_args
+        volumes=_volumes,
+        **extra_args
     )
 
 

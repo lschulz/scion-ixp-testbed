@@ -38,6 +38,8 @@ def create_parser() -> argparse.ArgumentParser:
         help="Begin starting all ASes (not containers) in the background and return as soon as possible."
              " Does not log AS output, but is faster then '-s' and '-p'. Also avoids issues with too"
              " many open SSH connections that '-p' might have.")
+    start_parser.add_argument("--no-push-images", dest='push_images', action='store_false',
+        help="Do not push local Docker images to remote hosts.")
     start_parser.set_defaults(mode='parallel', exec_subcommand=ixp_testbed.run.commands.start)
 
     # stop subcommand
@@ -130,6 +132,8 @@ def create_parser() -> argparse.ArgumentParser:
     cntrs_parser = subparsers.add_parser("cntrs",
         help="Manage Docker containers.")
     cntrs_parser.add_argument("command", choices=["start", "stop"])
+    cntrs_parser.add_argument("--no-push-images", dest='push_images', action='store_false',
+        help="Do not push local Docker images to remote hosts.")
     cntrs_parser.set_defaults(exec_subcommand=cntrs_command)
 
     # link subcommand
