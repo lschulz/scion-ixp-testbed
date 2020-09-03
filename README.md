@@ -25,6 +25,15 @@ cd ixp-testbed
 pip3 install -r requirements.txt
 ```
 
+Clone SCION and configure the environment:
+```bash
+echo 'export SC="$HOME/go/src/github.com/scionproto/scion"' >> ~/.profile
+echo 'export PYTHONPATH=$SC/python:$PYTHONPATH' >> ~/.profile
+source ~/.profile
+mkdir -p $SC
+git clone --branch v2020.03 https://github.com/netsec-ethz/scion $SC/.
+```
+
 
 Topology Specification
 ----------------------
