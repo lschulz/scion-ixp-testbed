@@ -72,10 +72,10 @@ SCION_TOPO_FILES_PATH = SCION_PATH + "topology/"
 # Master container and image #
 ##############################
 
-SCION_BASE_IMG_NAME = "scion"
+SCION_BASE_IMG_NAME = "scion:v2020.03"
 """Docker image containing the SCION source code and all dependencies."""
 
-AS_IMG_NAME = "ixp_testbed_as"
+AS_IMG_NAME = "ixp_testbed_as:v2020.03"
 """Docker image for AS containers."""
 
 MASTER_CNTR_NAME = "master"
