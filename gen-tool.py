@@ -45,30 +45,11 @@ class GenFolder:
             _, underlay_ip = topo['Overlay'].split("/")
 
             if not self._br_only:
-                # Zookeeper Service
-                if 'ZookeeperService' in topo:
-                    for zoo_name, zoo in topo['ZookeeperService'].items():
-                        print("  \033[36;1mZookeeper\033[0m \033[33;1m{}\033[0m".format(zoo_name))
-                        print(end="   ")
-                        self._print_addr(zoo)
-
-                # Beacon Service
-                for bs_name, bs in topo['BeaconService'].items():
-                    print("  \033[36;1mBeacon Service\033[0m \033[33;1m{}\033[0m".format(bs_name))
+                # Control Service
+                for bs_name, bs in topo['ControlService'].items():
+                    print("  \033[36;1mControl Service\033[0m \033[33;1m{}\033[0m".format(bs_name))
                     print(end="   ")
                     self._print_addr(bs['Addrs'][underlay_ip]['Public'])
-
-                # Certificate Service
-                for cs_name, cs in topo['CertificateService'].items():
-                    print("  \033[36;1mCertificate Service\033[0m \033[33;1m{}\033[0m".format(cs_name))
-                    print(end="   ")
-                    self._print_addr(cs['Addrs'][underlay_ip]['Public'])
-
-                # Path Service
-                for ps_name, ps in topo['PathService'].items():
-                    print("  \033[36;1mPath Service\033[0m \033[33;1m{}\033[0m".format(ps_name))
-                    print(end="   ")
-                    self._print_addr(ps['Addrs'][underlay_ip]['Public'])
 
             # Border Routers
             for br_name, br in topo['BorderRouters'].items():
