@@ -6,8 +6,6 @@ import re
 import time
 from typing import Dict, List, MutableMapping, Set
 
-import docker
-
 from ixp_testbed.address import ISD_AS
 from ixp_testbed.scion import AS
 from ixp_testbed.topology import Topology
@@ -22,15 +20,18 @@ class Measurements:
         self.experiment = "default"
         self.as_id = "undefined"
 
-    def add_values(self, process: str, timestamp: float, cpu_time: float):
-        """Add a measurement values for the given process.
+    def add_values(self, process: str, timestamp: float,
+        cpu_time: float, user_time: float, kernel_time: float):
+        """Add measurement values for the given process.
 
         The AS and experiment the new values belong to are controlled by `self.as_id` and
         `self.experiment`.
 
-        :param process: The process the measurements belong to. Use 'total' for the container totals.
+        :param process: The process the measurements belong to. Use 'total' for container totals.
         :param timestamp: Unix timestamp of the measurement (in seconds).
         :param cpu_time: Total elapsed CPU time of the process/process group (in seconds).
+        :param user_time: Amount of time in user mode (in seconds).
+        :param kernel_time: Amount of time in kernel mode (in seconds).
         """
         as_data = self.data.setdefault(self.as_id, {})
         process_data = as_data.setdefault(process, {})
@@ -39,9 +40,13 @@ class Measurements:
         if len(timeseries) == 0:
             timeseries['timestamp'] = []
             timeseries['cpu_time'] = []
+            timeseries['user_time'] = []
+            timeseries['kernel_time'] = []
 
         timeseries['timestamp'].append(timestamp)
         timeseries['cpu_time'].append(cpu_time)
+        timeseries['user_time'].append(user_time)
+        timeseries['kernel_time'].append(kernel_time)
 
 
 def measure_perf_stats(topo: Topology, measurements: Measurements,
@@ -142,7 +147,9 @@ def _get_current_values(isd_as: ISD_AS, asys: AS, processes: MutableMapping[int,
     timestamp = datetime.now(timezone.utc).timestamp()
     values = {'total': {
         'timestamp': timestamp,
-        'cpu_time': 1e-9 * float(lines[0]) # original value is in nanoseconds
+        'cpu_time': 1e-9 * float(lines[0]), # original value is in nanoseconds
+        'user_time': 0, # not implemented
+        'kernel_time': 0 # not implemented
     }}
 
     # Parse per process CPU time
@@ -150,10 +157,19 @@ def _get_current_values(isd_as: ISD_AS, asys: AS, processes: MutableMapping[int,
         if not line.startswith("cat"):
             fields = line.split()
             assert pid == int(fields[0])
+
+            # original value in jiffies
+            user_time = 1e-2 * float(fields[13])
+            kernel_time = 1e-2 * float(fields[14])
+            cpu_time = user_time + kernel_time
+
             values[processes[pid]] = {
                 'timestamp': timestamp,
-                'cpu_time': 1e-2 * (float(fields[13]) + float(fields[14])) # original value in jiffies
+                'cpu_time': cpu_time,
+                'user_time': user_time,
+                'kernel_time': kernel_time
             }
+
         else:
             log.warning("Process '%s' (%d) is gone.", processes[pid], pid)
             del processes[pid]

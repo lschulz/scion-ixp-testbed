@@ -114,18 +114,17 @@ def create_parser() -> argparse.ArgumentParser:
              " created by a previous run of this command. The new measurements will be merged into"
              " the existing file.")
     stats_parser.add_argument("-e", dest='experiment', type=str, default="default",
-        help="Name of the experiment as will be written to the result file. Default: 'default'"
-    )
+        help="Name of the experiment as will be written to the result file. Default: 'default'")
     stats_parser.add_argument("-p", dest='as_pattern', default='.*',
-        help="Regular expression matched against AS identifiers. Measurements are made only in matching ASes."
-             " Default: All ASes.")
+        help="Regular expression matched against AS identifiers. Measurements are taken in matching"
+             " ASes. Default: All ASes.")
     stats_parser.add_argument("--services", metavar="executable", nargs='*', default=[],
-        help="List of SCION executables (bin/border, bin/beacon_srv, etc.) to record separate statists for."
+        help="List of SCION executables (bin/border, bin/cs, etc.) to monitor."
              " By default only AS level statistics are returned.")
     stats_parser.add_argument("-i", dest='interval', type=float, default=10.0,
         help="Time interval to take measurements over in seconds. Default: 10")
-    stats_parser.add_argument("-c", dest="count", type=int, default=2,
-    help="The number of measurements to take. Default: 2")
+    stats_parser.add_argument("-c", dest='count', type=int, default=2,
+        help="The number of measurements to take. Default: 2")
     stats_parser.set_defaults(exec_subcommand=ixp_testbed.run.commands.stats)
 
     # cntrs subcommand
