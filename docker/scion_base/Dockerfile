@@ -62,3 +62,7 @@ RUN sudo mkdir -p /run/shm/dispatcher
 RUN sudo chown scion /run/shm/dispatcher && chgrp scion /run/shm/dispatcher
 RUN sudo mkdir -p /run/shm/sciond
 RUN sudo chown scion /run/shm/sciond && chgrp scion /run/shm/sciond
+
+# Install scion-apps from packages
+RUN echo "deb [trusted=yes] https://packages.netsec.inf.ethz.ch/debian all main" | sudo tee /etc/apt/sources.list.d/scionlab.list
+RUN sudo apt-get update && sudo apt-get install -y scion-apps-*
